@@ -147,6 +147,13 @@ fn sleep(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos) -> bool {
         content: Text::new("Respawn point set"),
         overlay: true,
     });
+    if crate::mobs::monsters_near(server, pos) {
+        player.send(&cb::SystemChat {
+            content: Text::new("You may not rest now, there are monsters nearby"),
+            overlay: true,
+        });
+        return true;
+    }
     let night = (NIGHT_START..NIGHT_END).contains(&time) || raining;
     if !night {
         player.send(&cb::SystemChat {
@@ -211,6 +218,7 @@ pub fn changed(server: &Arc<Server>, pos: BlockPos) {
     if falls(server, above) {
         server.schedule_block(above, 2);
     }
+    crate::fluids::wake_neighbours(server, pos);
 }
 
 /// Whether the block here is one that falls when nothing holds it up.
@@ -231,6 +239,10 @@ pub fn scheduled(server: &Arc<Server>, pos: BlockPos) {
         (state, block.name.clone(), props)
     };
     let short = name.strip_prefix("minecraft:").unwrap_or(&name);
+    if short == "water" || short == "lava" {
+        crate::fluids::tick(server, pos);
+        return;
+    }
     if short.ends_with("_button") && props.get("powered").map(String::as_str) == Some("true") {
         toggle_to(server, pos, &name, &props, "powered", false);
         return;

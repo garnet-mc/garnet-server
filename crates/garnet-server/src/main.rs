@@ -18,6 +18,7 @@ mod containers;
 mod config;
 mod entities;
 mod entity_commands;
+mod fluids;
 mod functions;
 mod furnaces;
 mod inventory;

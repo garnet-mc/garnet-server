@@ -371,9 +371,13 @@ impl Server {
         let changed = self.world().set_block(pos, state).unwrap_or(false);
         if changed {
             // This block, and the one above it, may now have nothing
-            // holding them up.
+            // holding them up; the fluids beside it may have somewhere new
+            // to go.
             self.schedule_block(pos, 2);
             self.schedule_block(pos.offset(0, 1, 0), 2);
+            for (dx, dy, dz) in [(1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, 1, 0), (0, -1, 0)] {
+                self.schedule_block(pos.offset(dx, dy, dz), 5);
+            }
             self.invalidate_chunk(pos.chunk());
             self.broadcast_near(
                 pos.chunk(),

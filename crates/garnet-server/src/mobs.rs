@@ -57,6 +57,18 @@ pub fn is_mob(name: &str) -> bool {
     kind_of(name).is_some()
 }
 
+/// Whether something that would keep a player awake is close by. Vanilla
+/// looks in a box eight blocks out and five up from the bed.
+pub fn monsters_near(server: &Arc<Server>, pos: BlockPos) -> bool {
+    let entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
+    entities.by_id.values().any(|entity| {
+        kind_of(&entity.kind).is_some_and(|kind| kind.hostile)
+            && (entity.x - pos.x as f64).abs() <= 8.0
+            && (entity.z - pos.z as f64).abs() <= 8.0
+            && (entity.y - pos.y as f64).abs() <= 5.0
+    })
+}
+
 /// Starting health for a summoned or spawned mob.
 pub fn health_of(name: &str) -> f32 {
     kind_of(name).map(|k| k.health).unwrap_or(20.0)
