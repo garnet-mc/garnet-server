@@ -28,7 +28,7 @@ pub fn item_name(server: &Server, id: i32) -> String {
 }
 
 pub fn max_stack(server: &Server, id: i32) -> i32 {
-    max_stack_size(&item_name(server, id))
+    max_stack_size(&server.data, &item_name(server, id))
 }
 
 /// Sends the whole inventory; the simplest way to keep the client honest.

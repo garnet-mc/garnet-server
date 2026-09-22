@@ -38,6 +38,8 @@ pub enum Kind {
     Furnace,
     /// On the player: two things to join and what they would make.
     Anvil,
+    /// On the player: something to enchant and the lapis to pay with.
+    Enchanting,
 }
 
 /// The containers we know how to open, and how big they are. Ender chests
@@ -67,6 +69,9 @@ pub fn open(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos, block: &s
     }
     if block.ends_with("anvil") {
         return crate::anvil::open(server, player, pos);
+    }
+    if block == "minecraft:enchanting_table" {
+        return crate::enchanting::open(server, player, pos);
     }
     let Some((size, menu, title)) = container_size(block) else {
         return false;
@@ -207,6 +212,7 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
         Kind::Crafting => player.lock().crafting.clone(),
         Kind::Furnace => crate::furnaces::state(server, open.pos).items,
         Kind::Anvil => player.lock().anvil.clone(),
+        Kind::Enchanting => player.lock().enchanting.clone(),
     };
     {
         let s = player.lock();
@@ -241,6 +247,7 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
         Kind::Crafting => player.lock().crafting = block_items.to_vec(),
         Kind::Furnace => crate::furnaces::touched(server, open.pos, block_items.to_vec()),
         Kind::Anvil => player.lock().anvil = block_items.to_vec(),
+        Kind::Enchanting => player.lock().enchanting = block_items.to_vec(),
     }
     {
         let mut s = player.lock();
@@ -256,6 +263,10 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
         crate::anvil::refresh(server, player);
         return;
     }
+    if open.kind == Kind::Enchanting {
+        crate::enchanting::refresh(server, player);
+        return;
+    }
     send_content(server, player, block_items);
     if open.kind == Kind::Block {
         refresh_others(server, player, open.pos);
@@ -267,7 +278,7 @@ fn apply(server: &Arc<Server>, slots: &mut [ItemStack], cursor: &mut ItemStack, 
     let index = click.slot;
     let limit = |server: &Server, stack: &ItemStack| {
         let name = crate::items::item_name(server, stack.item);
-        crate::inventory::max_stack_size(&name)
+        crate::inventory::max_stack_size(&server.data, &name)
     };
     match click.kind {
         ClickKind::Pickup => {
@@ -357,7 +368,7 @@ fn apply(server: &Arc<Server>, slots: &mut [ItemStack], cursor: &mut ItemStack, 
 fn move_into(server: &Arc<Server>, slots: &mut [ItemStack], from: usize, start: usize, end: usize) {
     let mut moving = slots[from].clone();
     let name = crate::items::item_name(server, moving.item);
-    let max = crate::inventory::max_stack_size(&name);
+    let max = crate::inventory::max_stack_size(&server.data, &name);
     // Top up matching stacks first, the way vanilla does.
     for i in start..end {
         if moving.count <= 0 {
@@ -406,6 +417,12 @@ pub fn close(server: &Arc<Server>, player: &Arc<Player>) {
             drop(s);
             left.extend(grid.into_iter().skip(1).filter(|stack| !stack.is_empty()));
         }
+        Some(Kind::Enchanting) => {
+            let mut s = player.lock();
+            let slots = std::mem::take(&mut s.enchanting);
+            drop(s);
+            left.extend(slots.into_iter().filter(|stack| !stack.is_empty()));
+        }
         Some(Kind::Anvil) => {
             let mut s = player.lock();
             let slots = std::mem::take(&mut s.anvil);
@@ -425,7 +442,7 @@ pub fn close(server: &Arc<Server>, player: &Arc<Player>) {
     }
     for stack in left {
         let name = crate::items::item_name(server, stack.item);
-        let max = crate::inventory::max_stack_size(&name);
+        let max = crate::inventory::max_stack_size(&server.data, &name);
         let over = player.lock().inventory.add(stack, max);
         if !over.is_empty() {
             let (x, y, z, yaw, pitch) = {

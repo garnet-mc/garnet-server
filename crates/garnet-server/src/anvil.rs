@@ -10,7 +10,9 @@
 use crate::player::Player;
 use crate::server::Server;
 use garnet_protocol::packets::play::clientbound as cb;
-use garnet_protocol::packets::play::items::{component, components_in, enchantments_in, number_in, ItemStack, PatchBuilder};
+use garnet_protocol::packets::play::items::{
+    component, components_in, enchantments_in, number_in, stored_enchantments_in, ItemStack, PatchBuilder,
+};
 use garnet_protocol::packets::play::GameMode;
 use garnet_protocol::{BlockPos, PacketWriter, Text};
 use std::sync::Arc;
@@ -40,18 +42,28 @@ pub fn plan(server: &Arc<Server>, inputs: &[ItemStack], name: Option<&str>) -> O
     }
     let second = inputs.get(SECOND).cloned().unwrap_or(ItemStack::EMPTY);
     let first_name = crate::items::item_name(server, first.item);
-    let limit = crate::durability::max_damage(&first_name);
+    let limit = crate::durability::max_damage(&server.data, &first_name);
 
     // Every repair a thing has had makes the next one dearer.
     let mut cost = number_in(&first.patch, component::REPAIR_COST).unwrap_or(0)
         + number_in(&second.patch, component::REPAIR_COST).unwrap_or(0);
     let mut damage = number_in(&first.patch, component::DAMAGE).unwrap_or(0);
-    let mut enchantments = enchantments_in(&first.patch).unwrap_or_default();
+    let first_is_book = first_name == "minecraft:enchanted_book";
+    let mut enchantments = carried(&first.patch, first_is_book);
     let mut worked = false;
     let mut spent_second = if second.is_empty() { 0 } else { second.count };
 
     if !second.is_empty() {
         let second_name = crate::items::item_name(server, second.item);
+        let from_book = second_name == "minecraft:enchanted_book";
+        // An enchanted book joins whatever it is put against; two of the
+        // same thing join as well.
+        if from_book || second.item == first.item {
+            if let Some(added) = join_enchantments(server, &first_name, &mut enchantments, &second, from_book) {
+                cost += added;
+                worked = true;
+            }
+        }
         if second.item == first.item && limit > 0 {
             // Two of the same: their lives add up, with a little over.
             let other_damage = number_in(&second.patch, component::DAMAGE).unwrap_or(0);
@@ -62,25 +74,7 @@ pub fn plan(server: &Arc<Server>, inputs: &[ItemStack], name: Option<&str>) -> O
                 cost += 2;
                 worked = true;
             }
-            for (enchantment, level) in enchantments_in(&second.patch).unwrap_or_default() {
-                match enchantments.iter_mut().find(|(existing, _)| *existing == enchantment) {
-                    Some(slot) => {
-                        // Two of a level make the next one up, as vanilla does.
-                        let merged = if slot.1 == level { level + 1 } else { slot.1.max(level) };
-                        if merged > slot.1 {
-                            cost += merged;
-                            worked = true;
-                        }
-                        slot.1 = merged;
-                    }
-                    None => {
-                        cost += level;
-                        worked = true;
-                        enchantments.push((enchantment, level));
-                    }
-                }
-            }
-        } else if limit > 0 && mends(&first_name, &second_name) {
+        } else if limit > 0 && mends(server, &first_name, &second_name) {
             // A material mends a quarter at a time.
             let per_unit = (limit as f32 * MATERIAL_SHARE) as i32;
             let mut used = 0;
@@ -93,7 +87,7 @@ pub fn plan(server: &Arc<Server>, inputs: &[ItemStack], name: Option<&str>) -> O
                 worked = true;
                 spent_second = used;
             }
-        } else {
+        } else if !worked {
             return None; // nothing these two can do for each other
         }
     }
@@ -104,7 +98,12 @@ pub fn plan(server: &Arc<Server>, inputs: &[ItemStack], name: Option<&str>) -> O
         patch = patch.damage(damage);
     }
     if !enchantments.is_empty() {
-        patch = patch.enchantments(&enchantments);
+        // A book keeps what it holds in a pocket of its own; everything
+        // else wears its enchantments.
+        patch = match first_is_book {
+            true => patch.stored_enchantments(&enchantments),
+            false => patch.enchantments(&enchantments),
+        };
     }
     let renamed = match name {
         Some(text) if !text.is_empty() => {
@@ -146,8 +145,81 @@ pub fn plan(server: &Arc<Server>, inputs: &[ItemStack], name: Option<&str>) -> O
     })
 }
 
-/// Whether this material mends that tool.
-fn mends(tool: &str, material: &str) -> bool {
+/// Joins the second item's enchantments into the first's, following the
+/// rules the data pack sets: an enchantment only goes on an item it belongs
+/// on, two of a level make the next one up, and nothing joins something it
+/// clashes with. Returns what the work adds to the bill.
+fn join_enchantments(
+    server: &Arc<Server>,
+    target: &str,
+    enchantments: &mut Vec<(i32, i32)>,
+    second: &ItemStack,
+    from_book: bool,
+) -> Option<i32> {
+    let offered = carried(&second.patch, from_book);
+    if offered.is_empty() {
+        return None;
+    }
+    // A book takes anything; everything else only what it is meant for.
+    let target_is_book = target == "minecraft:book" || target == "minecraft:enchanted_book";
+    let mut cost = 0;
+    for (enchantment, level) in offered {
+        if !target_is_book && !server.enchantments.goes_on(server, enchantment, target) {
+            continue;
+        }
+        match enchantments.iter_mut().find(|(existing, _)| *existing == enchantment) {
+            Some(slot) => {
+                // Two of a level make the next one up, as vanilla does.
+                let merged = if slot.1 == level { level + 1 } else { slot.1.max(level) };
+                let merged = merged.min(server.enchantments.max_level(enchantment));
+                if merged > slot.1 {
+                    cost += server.enchantments.anvil_cost(enchantment, merged, from_book);
+                    slot.1 = merged;
+                }
+            }
+            None => {
+                if enchantments
+                    .iter()
+                    .any(|(existing, _)| server.enchantments.clash(server, *existing, enchantment))
+                {
+                    continue; // it will not share the item with what is there
+                }
+                cost += server.enchantments.anvil_cost(enchantment, level, from_book);
+                enchantments.push((enchantment, level));
+            }
+        }
+    }
+    (cost > 0).then_some(cost)
+}
+
+/// The enchantments a stack carries, wherever it keeps them.
+fn carried(patch: &[u8], is_book: bool) -> Vec<(i32, i32)> {
+    if is_book {
+        return stored_enchantments_in(patch).unwrap_or_default();
+    }
+    enchantments_in(patch).unwrap_or_default()
+}
+
+/// Whether this material mends that tool. The game says which items mend
+/// what, as a tag on the tool itself.
+fn mends(server: &Arc<Server>, tool: &str, material: &str) -> bool {
+    if let Some(wanted) = server.data.item_components.repairable(tool) {
+        return match wanted.strip_prefix('#') {
+            Some(tag) => server
+                .data
+                .tags
+                .members("minecraft:item", tag)
+                .zip(server.data.registries.id_of("item", material))
+                .is_some_and(|(members, id)| members.contains(&id)),
+            None => wanted == material,
+        };
+    }
+    mends_guess(tool, material)
+}
+
+/// What we fall back on when the item component report is missing, as it is
+/// for data prepared by an older Garnet.
+fn mends_guess(tool: &str, material: &str) -> bool {
     let tool = tool.strip_prefix("minecraft:").unwrap_or(tool);
     let material = material.strip_prefix("minecraft:").unwrap_or(material);
     let wants = if tool.starts_with("wooden_") {
@@ -272,7 +344,7 @@ pub fn take(server: &Arc<Server>, player: &Arc<Player>) -> bool {
             s.inventory.cursor = work.result.clone();
         } else {
             let name = crate::items::item_name(server, work.result.item);
-            let max = crate::inventory::max_stack_size(&name);
+            let max = crate::inventory::max_stack_size(&server.data, &name);
             let over = s.inventory.add(work.result.clone(), max);
             if !over.is_empty() {
                 drop(s);

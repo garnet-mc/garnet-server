@@ -22,6 +22,10 @@ pub mod component {
     pub const LORE: i32 = 11;
     pub const ENCHANTMENTS: i32 = 13;
     pub const REPAIR_COST: i32 = 19;
+    /// What an enchanted book carries, as opposed to what it is enchanted
+    /// with: a book's own enchantments do nothing until an anvil moves them
+    /// onto something.
+    pub const STORED_ENCHANTMENTS: i32 = 45;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -95,14 +99,23 @@ pub struct PatchBuilder {
 }
 
 impl PatchBuilder {
-    pub fn enchantments(mut self, levels: &[(i32, i32)]) -> Self {
+    pub fn enchantments(self, levels: &[(i32, i32)]) -> Self {
+        self.enchantment_list(component::ENCHANTMENTS, levels)
+    }
+
+    /// The enchantments an enchanted book holds for later.
+    pub fn stored_enchantments(self, levels: &[(i32, i32)]) -> Self {
+        self.enchantment_list(component::STORED_ENCHANTMENTS, levels)
+    }
+
+    fn enchantment_list(mut self, component: i32, levels: &[(i32, i32)]) -> Self {
         let mut w = PacketWriter::new();
         w.write_varint(levels.len() as i32);
         for (enchantment, level) in levels {
             w.write_varint(*enchantment);
             w.write_varint(*level);
         }
-        self.added.push((component::ENCHANTMENTS, w.into_inner()));
+        self.added.push((component, w.into_inner()));
         self
     }
 
@@ -154,8 +167,6 @@ impl PatchBuilder {
     }
 }
 
-/// Reads the enchantment levels out of a patch this server built (or a
-/// client patch that starts with them). `None` when there are none.
 /// The components of a patch this server wrote, in order. Returns None
 /// for a patch holding anything we cannot measure the length of, so a
 /// caller can leave such an item alone rather than mangle it.
@@ -178,7 +189,7 @@ pub fn components_in(patch: &[u8]) -> Option<(Vec<(i32, Vec<u8>)>, Vec<i32>)> {
             component::CUSTOM_NAME => {
                 r.read_nbt().ok()?;
             }
-            component::ENCHANTMENTS => {
+            component::ENCHANTMENTS | component::STORED_ENCHANTMENTS => {
                 let n = r.read_varint().ok()?;
                 for _ in 0..n {
                     r.read_varint().ok()?;
@@ -233,22 +244,25 @@ pub fn with_component(patch: &[u8], id: i32, data: Vec<u8>) -> Option<Vec<u8>> {
 }
 
 pub fn enchantments_in(patch: &[u8]) -> Option<Vec<(i32, i32)>> {
-    let mut r = PacketReader::new(patch);
-    let added = r.read_varint().ok()?;
-    let _removed = r.read_varint().ok()?;
-    for _ in 0..added {
-        let id = r.read_varint().ok()?;
-        if id != component::ENCHANTMENTS {
-            return None; // cannot skip unknown component data
-        }
-        let n = r.read_varint().ok()?;
-        let mut out = Vec::new();
-        for _ in 0..n {
-            out.push((r.read_varint().ok()?, r.read_varint().ok()?));
-        }
-        return Some(out);
+    enchantment_list_in(patch, component::ENCHANTMENTS)
+}
+
+/// What an enchanted book is holding, which is not the same as what it is
+/// itself enchanted with.
+pub fn stored_enchantments_in(patch: &[u8]) -> Option<Vec<(i32, i32)>> {
+    enchantment_list_in(patch, component::STORED_ENCHANTMENTS)
+}
+
+fn enchantment_list_in(patch: &[u8], component: i32) -> Option<Vec<(i32, i32)>> {
+    let (added, _) = components_in(patch)?;
+    let (_, data) = added.iter().find(|(id, _)| *id == component)?;
+    let mut r = PacketReader::new(data);
+    let n = r.read_varint().ok()?;
+    let mut out = Vec::new();
+    for _ in 0..n {
+        out.push((r.read_varint().ok()?, r.read_varint().ok()?));
     }
-    None
+    Some(out)
 }
 
 // ---- clientbound ----

@@ -399,6 +399,13 @@ pub async fn handle(server: &Arc<Server>, player: &Arc<Player>, name: &str, r: &
                 crate::containers::click(server, player, p);
             }
         }
+        "container_button_click" => {
+            let p = sb::ContainerButtonClick::read(r)?;
+            let open = player.lock().container.clone();
+            if open.is_some_and(|c| c.window_id == p.container_id) {
+                crate::enchanting::choose(server, player, p.button);
+            }
+        }
         "rename_item" => {
             let p = sb::RenameItem::read(r)?;
             crate::anvil::rename(server, player, p.name);

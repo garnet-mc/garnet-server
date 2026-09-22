@@ -367,8 +367,17 @@ impl Inventory {
     }
 }
 
-/// Stack limits by item name; vanilla's defaults are 64, 16 and 1.
-pub fn max_stack_size(name: &str) -> i32 {
+/// How many of an item fit in one slot, from the game's own defaults.
+pub fn max_stack_size(data: &garnet_data::GameData, name: &str) -> i32 {
+    if let Some(item) = data.item_components.get(name) {
+        return item.max_stack_size;
+    }
+    stack_size_guess(name)
+}
+
+/// What we fall back on when the item component report is missing, as it is
+/// for data prepared by an older Garnet. The defaults are 64, 16 and 1.
+fn stack_size_guess(name: &str) -> i32 {
     let short = name.strip_prefix("minecraft:").unwrap_or(name);
     const SINGLE_SUFFIXES: &[&str] = &[
         "_sword", "_pickaxe", "_axe", "_shovel", "_hoe", "_helmet", "_chestplate", "_leggings", "_boots", "_horse_armor", "_boat",

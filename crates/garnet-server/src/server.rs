@@ -80,6 +80,8 @@ pub struct Server {
     pub loot: crate::loot::LootTables,
     /// What the crafting grid can make.
     pub recipes: crate::recipes::Recipes,
+    /// What an enchanting table may offer, and on what.
+    pub enchantments: crate::enchanting::Enchantments,
     /// What mobs leave behind.
     pub mob_loot: crate::loot::LootTables,
     /// The furnaces that are currently burning.

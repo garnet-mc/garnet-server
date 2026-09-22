@@ -248,6 +248,24 @@ impl ServerboundPacket for Attack {
     }
 }
 
+/// A button inside a window: one of an enchanting table's three offers,
+/// or a page of a villager's trades.
+pub struct ContainerButtonClick {
+    pub container_id: i32,
+    pub button: i32,
+}
+
+impl ServerboundPacket for ContainerButtonClick {
+    const NAME: &'static str = "container_button_click";
+    const STATE: State = State::Play;
+    fn read(r: &mut PacketReader) -> Result<Self> {
+        Ok(Self {
+            container_id: r.read_varint()?,
+            button: r.read_varint()?,
+        })
+    }
+}
+
 /// The name typed into an anvil.
 pub struct RenameItem {
     pub name: String,

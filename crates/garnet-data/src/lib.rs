@@ -15,6 +15,7 @@
 pub mod blocks;
 pub mod datapack;
 pub mod generator;
+pub mod item_components;
 pub mod java;
 pub mod light;
 pub mod mojang;
@@ -27,6 +28,7 @@ use std::path::{Path, PathBuf};
 
 pub use blocks::{BlockRegistry, BlockState};
 pub use datapack::{DynamicRegistries, DynamicRegistry, Tags};
+pub use item_components::{ItemComponents, ItemDefaults};
 pub use registries::Registries;
 
 /// Which Minecraft version to run.
@@ -57,6 +59,8 @@ pub struct GameData {
     pub registries: Registries,
     pub dynamic: DynamicRegistries,
     pub tags: Tags,
+    /// What a fresh stack of each item carries: wear, stack size and the rest.
+    pub item_components: ItemComponents,
     /// Light given off and blocked by each block state.
     pub light: light::LightTable,
     /// Where this version's files live (jar, reports, extracted data).
@@ -107,6 +111,7 @@ impl GameData {
         let registries = Registries::from_report(&read_json("registries.json")?)?;
         let dynamic = DynamicRegistries::load(&version_dir.join("datapack"))?;
         let tags = Tags::load(&version_dir.join("datapack").join("tags"), &registries, &dynamic)?;
+        let item_components = ItemComponents::load(&reports_dir)?;
 
         tracing::info!(
             "loaded Minecraft {version_id}: protocol {protocol_version}, {} block states, {} registries, {} tag registries",
@@ -126,8 +131,16 @@ impl GameData {
             dynamic,
             light,
             tags,
+            item_components,
             version_dir: version_dir.to_owned(),
         })
+    }
+
+    /// The numeric id of an entry in any registry, static or data-driven.
+    /// Enchantments and damage types live in the data pack, so a plain
+    /// `registries` lookup misses them.
+    pub fn id_of(&self, registry: &str, entry: &str) -> Option<i32> {
+        self.registries.id_of(registry, entry).or_else(|| self.dynamic.id_of(registry, entry))
     }
 
     /// The `Registry Data` packets to send during configuration, in order.

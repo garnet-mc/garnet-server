@@ -18,6 +18,7 @@ mod commands;
 mod containers;
 mod config;
 mod durability;
+mod enchanting;
 mod entities;
 mod entity_commands;
 mod experience;
@@ -185,6 +186,7 @@ async fn async_main(cli: Cli) -> Result<()> {
             rules: RwLock::new(rules::WorldRules::load(&root.join(&config.world.name), &config.world.difficulty)),
             loot: loot::LootTables::new(&data),
             recipes: recipes::Recipes::load(&data),
+            enchantments: enchanting::Enchantments::load(&data),
             mob_loot: loot::LootTables::entities(&data),
             furnaces: furnaces::Furnaces::new(),
             block_ticks: Mutex::new(Vec::new()),

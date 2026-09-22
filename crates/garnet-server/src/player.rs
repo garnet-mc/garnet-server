@@ -105,6 +105,11 @@ pub struct PlayerState {
     pub anvil: Vec<garnet_protocol::packets::play::items::ItemStack>,
     /// The name typed into that anvil.
     pub anvil_name: Option<String>,
+    /// The open enchanting table: the item and the lapis paying for it.
+    pub enchanting: Vec<garnet_protocol::packets::play::items::ItemStack>,
+    /// What this player's offers are drawn from; it changes each time they
+    /// take one, and holds still otherwise.
+    pub enchant_seed: i64,
     pub next_window_id: i32,
     /// Non-player entities this client has been shown.
     pub visible_entities: HashSet<i32>,
@@ -206,6 +211,8 @@ impl Player {
                 crafting: Vec::new(),
                 anvil: Vec::new(),
                 anvil_name: None,
+                enchanting: Vec::new(),
+                enchant_seed: 0,
                 next_window_id: 0,
                 visible_entities: HashSet::new(),
             }),

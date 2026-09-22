@@ -181,7 +181,7 @@ fn collect(server: &Arc<Server>, pos: BlockPos, items: &mut [ItemStack]) -> bool
     for (id, stack) in wanted {
         let mine: Vec<usize> = (0..items.len()).collect();
         let name = crate::items::item_name(server, stack.item);
-        let max = crate::inventory::max_stack_size(&name);
+        let max = crate::inventory::max_stack_size(&server.data, &name);
         let mut left = stack.clone();
         for slot in mine {
             if left.count <= 0 {
@@ -211,7 +211,7 @@ fn collect(server: &Arc<Server>, pos: BlockPos, items: &mut [ItemStack]) -> bool
 /// The first slot of `allowed` that would take this item.
 fn room_for(server: &Arc<Server>, slots: &[ItemStack], allowed: &[usize], one: &ItemStack) -> Option<usize> {
     let name = crate::items::item_name(server, one.item);
-    let max = crate::inventory::max_stack_size(&name);
+    let max = crate::inventory::max_stack_size(&server.data, &name);
     allowed
         .iter()
         .copied()

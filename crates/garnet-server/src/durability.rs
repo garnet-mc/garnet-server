@@ -12,8 +12,18 @@ use garnet_protocol::PacketWriter;
 use crate::server::Server;
 use std::sync::Arc;
 
-/// How much wear a thing takes before it breaks, by what it is made of.
-pub fn max_damage(item: &str) -> i32 {
+/// How much wear a thing takes before it breaks, from the game's own
+/// defaults.
+pub fn max_damage(data: &garnet_data::GameData, item: &str) -> i32 {
+    if let Some(defaults) = data.item_components.get(item) {
+        return defaults.max_damage;
+    }
+    wear_guess(item)
+}
+
+/// What we fall back on when the item component report is missing, as it is
+/// for data prepared by an older Garnet.
+fn wear_guess(item: &str) -> i32 {
     let short = item.strip_prefix("minecraft:").unwrap_or(item);
     let tool = |wood: i32, stone: i32, iron: i32, gold: i32, diamond: i32, netherite: i32| {
         if short.starts_with("wooden_") {
@@ -74,7 +84,7 @@ pub fn max_damage(item: &str) -> i32 {
 /// has broken.
 fn wear(server: &Arc<Server>, stack: &ItemStack, amount: i32) -> Option<ItemStack> {
     let name = crate::items::item_name(server, stack.item);
-    let limit = max_damage(&name);
+    let limit = max_damage(&server.data, &name);
     if limit == 0 || amount <= 0 {
         return Some(stack.clone());
     }
@@ -109,7 +119,8 @@ fn wear(server: &Arc<Server>, stack: &ItemStack, amount: i32) -> Option<ItemStac
 }
 
 fn enchantment_level(server: &Arc<Server>, stack: &ItemStack, name: &str) -> i32 {
-    let Some(id) = server.data.registries.id_of("enchantment", name) else { return 0 };
+    // Enchantments are data-driven, so their ids come from the data pack.
+    let Some(id) = server.data.id_of("enchantment", name) else { return 0 };
     garnet_protocol::packets::play::items::enchantments_in(&stack.patch)
         .unwrap_or_default()
         .into_iter()

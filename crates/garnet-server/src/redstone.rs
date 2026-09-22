@@ -459,7 +459,7 @@ fn container_signal(server: &Arc<Server>, pos: BlockPos) -> Option<i32> {
     let mut filled = 0.0f32;
     for stack in items.iter().filter(|s| !s.is_empty()) {
         let name = crate::items::item_name(server, stack.item);
-        let max = crate::inventory::max_stack_size(&name).max(1) as f32;
+        let max = crate::inventory::max_stack_size(&server.data, &name).max(1) as f32;
         filled += stack.count as f32 / max;
     }
     if filled <= 0.0 {
