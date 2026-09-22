@@ -110,6 +110,8 @@ pub struct PlayerState {
     /// What this player's offers are drawn from; it changes each time they
     /// take one, and holds still otherwise.
     pub enchant_seed: i64,
+    /// When this player started drawing a bow.
+    pub drawing_since: Option<u64>,
     pub next_window_id: i32,
     /// Non-player entities this client has been shown.
     pub visible_entities: HashSet<i32>,
@@ -213,6 +215,7 @@ impl Player {
                 anvil_name: None,
                 enchanting: Vec::new(),
                 enchant_seed: 0,
+                drawing_since: None,
                 next_window_id: 0,
                 visible_entities: HashSet::new(),
             }),

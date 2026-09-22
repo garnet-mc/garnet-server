@@ -225,6 +225,15 @@ pub fn start_using(server: &Arc<Server>, player: &Arc<Player>, tick: u64) {
         return;
     }
     let name = crate::items::item_name(server, held.item);
+    // Some things are thrown the moment they are used.
+    if crate::projectiles::throw_held(server, player) {
+        return;
+    }
+    // A bow is drawn now and loosed when it is let go.
+    if name == "minecraft:bow" {
+        player.lock().drawing_since = Some(tick);
+        return;
+    }
     // An empty bottle held out at water fills with it instead.
     if name == "minecraft:glass_bottle" {
         crate::potions::fill_bottle(server, player);
@@ -241,8 +250,13 @@ pub fn start_using(server: &Arc<Server>, player: &Arc<Player>, tick: u64) {
     player.lock().eating_since = Some(tick);
 }
 
-pub fn stop_using(player: &Arc<Player>) {
+/// The player let go of whatever they were holding out.
+pub fn stop_using(server: &Arc<Server>, player: &Arc<Player>, tick: u64) {
     player.lock().eating_since = None;
+    let drawn = player.lock().drawing_since.take();
+    if let Some(started) = drawn {
+        crate::projectiles::loose_arrow(server, player, tick.saturating_sub(started));
+    }
 }
 
 /// Movement: what it costs, and how far there is left to fall.

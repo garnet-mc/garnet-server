@@ -630,6 +630,27 @@ impl ClientboundPacket for ContainerClose {
 }
 
 /// Shoves an entity: knockback, and anything else that throws a player.
+/// One of the effects the client knows how to play by number: a potion
+/// breaking, a door opening, a dispenser going off.
+pub struct LevelEvent {
+    pub event: i32,
+    pub pos: crate::types::BlockPos,
+    pub data: i32,
+    /// True for the ones heard across the world, such as a thunderclap.
+    pub global: bool,
+}
+
+impl ClientboundPacket for LevelEvent {
+    const NAME: &'static str = "level_event";
+    const STATE: State = State::Play;
+    fn write(&self, w: &mut PacketWriter) {
+        w.write_i32(self.event);
+        w.write_block_pos(self.pos);
+        w.write_i32(self.data);
+        w.write_bool(self.global);
+    }
+}
+
 pub struct SetEntityMotion {
     pub entity_id: i32,
     pub x: f64,

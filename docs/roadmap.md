@@ -8,11 +8,12 @@ mobs that spawn, wander and fight back, doors, beds, falling blocks,
 growing crops, flowing water and lava, redstone from wire and torches
 through comparators, observers, pistons and TNT, hoppers, experience
 and tools that wear out, anvils, enchanting tables and brewing stands,
-saves, mods, the admin panel, voice relaying and anti-cheat.
+bows and the rest of what flies, saves, mods, the admin panel, voice
+relaying and anti-cheat.
 
 What comes next, roughly in order:
 
-1. **Things that fly** – arrows, thrown splash and lingering potions, ender pearls and snowballs, none of which have anywhere to come from yet (brewing itself is done: stands, potions and drinking them).
+1. **Mobs that fight back properly** – skeletons with bows, creepers that go off, and pathfinding for all of them (arrows, thrown potions, ender pearls, snowballs and eggs fly now; crossbows, tridents and dispensers that shoot them do not).
 2. **The rest of the workbenches** – the stonecutter, the grindstone and the smithing table (chests, the crafting grid, furnaces, anvils, enchanting tables and brewing stands are done).
 3. **Rails and minecarts** – and the rest of what rides them (hoppers and the rest of redstone are done: wire, torches, levers, buttons, plates, repeaters, comparators, observers, pistons, dispensers, droppers, note blocks, lamps, doors and TNT).
 3. **More mobs** – skeletons and creepers want arrows and explosions first, and everything wants proper pathfinding, sounds and experience orbs.

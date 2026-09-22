@@ -693,7 +693,7 @@ fn handle_dig(server: &Arc<Server>, player: &Arc<Player>, action: sb::PlayerActi
             return;
         }
         ReleaseUseItem => {
-            crate::survival::stop_using(player);
+            crate::survival::stop_using(server, player, server.current_tick());
             return;
         }
         _ => {}

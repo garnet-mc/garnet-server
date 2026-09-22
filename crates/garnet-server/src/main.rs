@@ -38,6 +38,7 @@ mod mobs;
 mod net;
 mod player;
 mod potions;
+mod projectiles;
 mod playerdata;
 mod rcon;
 mod recipes;

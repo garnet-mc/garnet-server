@@ -49,6 +49,8 @@ pub struct Entity {
     pub blocked_ahead: bool,
     /// Summoned or named mobs stay put instead of despawning.
     pub persistent: bool,
+    /// Set for arrows and anything else in flight; see `projectiles`.
+    pub projectile: Option<crate::projectiles::Projectile>,
 }
 
 impl Entity {
@@ -216,6 +218,7 @@ pub fn new_entity(server: &Server, kind: &str, x: f64, y: f64, z: f64) -> Option
         attack_cooldown: 0,
         blocked_ahead: false,
         persistent: false,
+        projectile: None,
     })
 }
 
@@ -244,7 +247,12 @@ fn show(player: &Player, entity: &Entity) {
         pitch: entity.pitch,
         yaw: entity.yaw,
         head_yaw: entity.yaw,
-        data: entity.xp,
+        // For an orb this is what it is worth; for a projectile the client
+        // wants to know who threw it.
+        data: match &entity.projectile {
+            Some(shot) => shot.owner.map(|id| id + 1).unwrap_or(0),
+            None => entity.xp,
+        },
     });
     if let Some(metadata) = metadata_packet(entity) {
         player.send(&metadata);
@@ -350,6 +358,12 @@ pub fn tick(server: &Arc<Server>) {
         entity.age = entity.age.wrapping_add(1);
         if entity.pickup_delay > 0 {
             entity.pickup_delay -= 1;
+        }
+        // Anything in flight has its own way of moving, and may not
+        // survive the tick.
+        if entity.projectile.is_some() {
+            crate::projectiles::step(server, entity);
+            continue;
         }
         let moved = step_physics(server, &mut entity);
         // Items and other things lying still do not need updates.
@@ -649,6 +663,11 @@ fn from_nbt(server: &Server, c: &NbtCompound) -> Option<Entity> {
             count: item.get_i32("count").unwrap_or(1),
             patch,
         });
+    }
+    // Anything that was in flight when the world was put away comes back
+    // sitting still: we do not save a flight path.
+    if crate::projectiles::flies(&e.kind) {
+        e.projectile = Some(crate::projectiles::landed());
     }
     Some(e)
 }
