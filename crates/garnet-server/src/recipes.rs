@@ -64,9 +64,23 @@ struct Shapeless {
     result: (String, i32),
 }
 
+/// One thing a furnace can turn into another.
+#[derive(Debug, Clone)]
+pub struct Cooking {
+    ingredient: Ingredient,
+    pub result: String,
+    pub time: i32,
+    pub experience: f32,
+    /// Which furnaces will do it: a blast furnace only takes ores, a
+    /// smoker only food.
+    pub blasting: bool,
+    pub smoking: bool,
+}
+
 pub struct Recipes {
     shaped: Vec<Shaped>,
     shapeless: Vec<Shapeless>,
+    cooking: Vec<Cooking>,
 }
 
 impl Recipes {
@@ -75,11 +89,12 @@ impl Recipes {
         let dir = data.version_dir.join("datapack").join("minecraft").join("recipe");
         let mut shaped = Vec::new();
         let mut shapeless = Vec::new();
+        let mut cooking = Vec::new();
         let entries = match std::fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(e) => {
                 tracing::warn!("no crafting recipes in {}: {e}", dir.display());
-                return Self { shaped, shapeless };
+                return Self { shaped, shapeless, cooking };
             }
         };
         for entry in entries.flatten() {
@@ -100,11 +115,25 @@ impl Recipes {
                         shapeless.push(recipe);
                     }
                 }
+                kind @ ("minecraft:smelting" | "minecraft:blasting" | "minecraft:smoking" | "minecraft:campfire_cooking") => {
+                    if let Some(recipe) = parse_cooking(&json, kind) {
+                        cooking.push(recipe);
+                    }
+                }
                 _ => {}
             }
         }
-        tracing::info!("loaded {} shaped and {} shapeless recipes", shaped.len(), shapeless.len());
-        Self { shaped, shapeless }
+        tracing::info!(
+            "loaded {} shaped, {} shapeless and {} cooking recipes",
+            shaped.len(),
+            shapeless.len(),
+            cooking.len()
+        );
+        Self {
+            shaped,
+            shapeless,
+            cooking,
+        }
     }
 
     /// What this grid makes, if anything. `grid` is row-major, `None` for
@@ -182,6 +211,31 @@ fn fits(data: &GameData, recipe: &Shaped, grid: &[Option<String>], width: usize,
         }
     }
     true
+}
+
+/// What a furnace of this sort makes of an item, if anything.
+impl Recipes {
+    pub fn smelt(&self, data: &GameData, item: &str, furnace: &str) -> Option<&Cooking> {
+        self.cooking.iter().find(|recipe| {
+            let allowed = match furnace {
+                "minecraft:blast_furnace" => recipe.blasting,
+                "minecraft:smoker" => recipe.smoking,
+                _ => !recipe.blasting && !recipe.smoking,
+            };
+            allowed && recipe.ingredient.matches(data, item)
+        })
+    }
+}
+
+fn parse_cooking(json: &Value, kind: &str) -> Option<Cooking> {
+    Some(Cooking {
+        ingredient: Ingredient::parse(json.get("ingredient")?)?,
+        result: parse_result(json)?.0,
+        time: json.get("cookingtime").and_then(Value::as_i64).unwrap_or(200) as i32,
+        experience: json.get("experience").and_then(Value::as_f64).unwrap_or(0.0) as f32,
+        blasting: kind == "minecraft:blasting",
+        smoking: kind == "minecraft:smoking" || kind == "minecraft:campfire_cooking",
+    })
 }
 
 fn parse_shaped(json: &Value) -> Option<Shaped> {

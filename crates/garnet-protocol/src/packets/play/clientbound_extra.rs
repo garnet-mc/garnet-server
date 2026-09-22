@@ -599,6 +599,23 @@ impl ClientboundPacket for OpenScreen {
     }
 }
 
+/// One of a window's numbers: a furnace's fire and arrow, and the like.
+pub struct ContainerSetData {
+    pub window_id: i32,
+    pub property: i32,
+    pub value: i32,
+}
+
+impl ClientboundPacket for ContainerSetData {
+    const NAME: &'static str = "container_set_data";
+    const STATE: State = State::Play;
+    fn write(&self, w: &mut PacketWriter) {
+        w.write_varint(self.window_id);
+        w.write_i16(self.property as i16);
+        w.write_i16(self.value as i16);
+    }
+}
+
 /// Shuts a window the server opened.
 pub struct ContainerClose {
     pub window_id: i32,

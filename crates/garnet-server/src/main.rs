@@ -18,6 +18,7 @@ mod config;
 mod entities;
 mod entity_commands;
 mod functions;
+mod furnaces;
 mod inventory;
 mod items;
 mod lists;
@@ -177,6 +178,7 @@ async fn async_main(cli: Cli) -> Result<()> {
             loot: loot::LootTables::new(&data),
             recipes: recipes::Recipes::load(&data),
             mob_loot: loot::LootTables::entities(&data),
+            furnaces: furnaces::Furnaces::new(),
             entities: Mutex::new(world_entities::Entities::new(&root.join(&config.world.name))),
             boards: Mutex::new(boards::Boards::load(&root.join(&config.world.name))),
             voice,

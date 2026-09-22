@@ -35,6 +35,8 @@ pub enum Kind {
     Block,
     /// On the player: a crafting grid with its result in slot 0.
     Crafting,
+    /// In the block, but ticked whether or not anyone is watching.
+    Furnace,
 }
 
 /// The containers we know how to open, and how big they are. Ender chests
@@ -64,6 +66,9 @@ pub fn open(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos, block: &s
     if block == "minecraft:crafting_table" {
         return open_crafting(server, player, pos);
     }
+    if crate::furnaces::is_furnace(block) {
+        return open_furnace(server, player, pos, block);
+    }
     let Some((size, menu, title)) = container_size(block) else {
         return false;
     };
@@ -90,6 +95,43 @@ pub fn open(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos, block: &s
     });
     send_content(server, player, &items);
     true
+}
+
+/// A furnace window: what goes in, what burns and what comes out.
+fn open_furnace(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos, block: &str) -> bool {
+    let menu = match block {
+        "minecraft:blast_furnace" => "minecraft:blast_furnace",
+        "minecraft:smoker" => "minecraft:smoker",
+        _ => "minecraft:furnace",
+    };
+    let window_id = {
+        let mut s = player.lock();
+        s.next_window_id = s.next_window_id % 100 + 1;
+        let id = s.next_window_id;
+        s.container = Some(OpenContainer {
+            pos,
+            window_id: id,
+            size: crate::furnaces::SLOTS,
+            title: "Furnace".to_owned(),
+            kind: Kind::Furnace,
+        });
+        id
+    };
+    let menu_type = server.data.registries.id_of("menu", menu).unwrap_or(0);
+    player.send(&cb::OpenScreen {
+        window_id,
+        menu_type,
+        title: Text::new("Furnace"),
+    });
+    let furnace = crate::furnaces::state(server, pos);
+    send_content(server, player, &furnace.items);
+    crate::furnaces::opened(server, player, pos);
+    true
+}
+
+/// Sends a window's own slots and the player's, from outside this module.
+pub fn send_window(server: &Arc<Server>, player: &Arc<Player>, items: &[ItemStack]) {
+    send_content(server, player, items);
 }
 
 /// A crafting table: nine slots to lay things out in and one to take the
@@ -167,6 +209,7 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
     let mut slots = match open.kind {
         Kind::Block => read_items(server, open.pos, open.size),
         Kind::Crafting => player.lock().crafting.clone(),
+        Kind::Furnace => crate::furnaces::state(server, open.pos).items,
     };
     {
         let s = player.lock();
@@ -192,6 +235,7 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
     match open.kind {
         Kind::Block => write_items(server, open.pos, block_items),
         Kind::Crafting => player.lock().crafting = block_items.to_vec(),
+        Kind::Furnace => crate::furnaces::touched(server, open.pos, block_items.to_vec()),
     }
     {
         let mut s = player.lock();
@@ -432,6 +476,17 @@ pub fn read_items(server: &Server, pos: BlockPos, size: usize) -> Vec<ItemStack>
 
 /// Writes the contents back into the block entity beside the block.
 pub fn write_items(server: &Server, pos: BlockPos, items: &[ItemStack]) {
+    // A new block entity is named after the block it belongs to, so other
+    // tools reading the region file see what they expect.
+    let block_entity_id = {
+        let state = server.world().get_block(pos).unwrap_or(0);
+        server
+            .data
+            .blocks
+            .block_of_state(state as i32)
+            .map(|b| b.name.clone())
+            .unwrap_or_else(|| "minecraft:chest".to_owned())
+    };
     let list: Vec<NbtTag> = items
         .iter()
         .enumerate()
@@ -458,7 +513,7 @@ pub fn write_items(server: &Server, pos: BlockPos, items: &[ItemStack]) {
         compound.put("x", pos.x);
         compound.put("y", pos.y);
         compound.put("z", pos.z);
-        compound.put("id", "minecraft:chest");
+        compound.put("id", block_entity_id.as_str());
         compound.put("Items", list);
         chunk.block_entities.push(compound);
     }
@@ -467,7 +522,14 @@ pub fn write_items(server: &Server, pos: BlockPos, items: &[ItemStack]) {
 
 /// Tips a broken container's contents onto the ground.
 pub fn spill(server: &Arc<Server>, pos: BlockPos, block: &str) {
-    let Some((size, _, _)) = container_size(block) else { return };
+    let size = if crate::furnaces::is_furnace(block) {
+        crate::furnaces::SLOTS
+    } else {
+        match container_size(block) {
+            Some((size, _, _)) => size,
+            None => return,
+        }
+    };
     let items = read_items(server, pos, size);
     if items.iter().all(ItemStack::is_empty) {
         return;
@@ -504,6 +566,45 @@ fn remove_block_entity(server: &Server, pos: BlockPos) {
     chunk.block_entities.retain(|be| {
         be.get_i32("x") != Some(pos.x) || be.get_i32("y") != Some(pos.y) || be.get_i32("z") != Some(pos.z)
     });
+    chunk.dirty = true;
+}
+
+/// The block entity at a spot, for anything that keeps numbers there.
+pub fn block_entity_at(server: &Server, pos: BlockPos) -> Option<NbtCompound> {
+    block_entity(server, pos)
+}
+
+/// Writes plain numbers into a block entity, leaving its items alone.
+pub fn set_block_entity_numbers(server: &Server, pos: BlockPos, values: &[(&str, i32)]) {
+    let mut world = server.world();
+    let Ok(chunk) = world.chunk_mut(pos.chunk()) else { return };
+    let existing = chunk.block_entities.iter_mut().find(|be| {
+        be.get_i32("x") == Some(pos.x) && be.get_i32("y") == Some(pos.y) && be.get_i32("z") == Some(pos.z)
+    });
+    let compound = match existing {
+        Some(compound) => compound,
+        None => {
+            let mut fresh = NbtCompound::new();
+            fresh.put("x", pos.x);
+            fresh.put("y", pos.y);
+            fresh.put("z", pos.z);
+            let name = {
+                let state = server.world().get_block(pos).unwrap_or(0);
+                server
+                    .data
+                    .blocks
+                    .block_of_state(state as i32)
+                    .map(|b| b.name.clone())
+                    .unwrap_or_else(|| "minecraft:furnace".to_owned())
+            };
+            fresh.put("id", name.as_str());
+            chunk.block_entities.push(fresh);
+            chunk.block_entities.last_mut().expect("just pushed")
+        }
+    };
+    for (name, value) in values {
+        compound.put(*name, *value);
+    }
     chunk.dirty = true;
 }
 

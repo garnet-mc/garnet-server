@@ -3,13 +3,13 @@
 Garnet already handles login (online mode, Velocity and BungeeCord), the
 configuration handshake, chunk streaming, movement, chat, the vanilla
 command set, block breaking and placing, sky and block lighting, item
-entities, health, hunger and combat, chests and crafting, mobs that
-spawn, wander and fight back, saves, mods, the admin panel, voice
-relaying and anti-cheat.
+entities, health, hunger and combat, chests, crafting and furnaces,
+mobs that spawn, wander and fight back, saves, mods, the admin panel,
+voice relaying and anti-cheat.
 
 What comes next, roughly in order:
 
-1. **Furnaces and the rest of the workbenches** – smelting, anvils, enchanting, brewing (chests, barrels and the crafting grid are done).
+1. **The rest of the workbenches** – anvils, enchanting, brewing, the stonecutter and the grindstone (chests, the crafting grid and furnaces are done).
 2. **Block behaviours** – gravity blocks, doors, beds, torches, fluids.
 3. **More mobs** – skeletons and creepers want arrows and explosions first, and everything wants proper pathfinding, sounds and experience orbs.
 4. **Vanilla-compatible terrain** – reproduce Mojang's noise generator from the datapack settings so seeds match.

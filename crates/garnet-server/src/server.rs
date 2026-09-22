@@ -82,6 +82,8 @@ pub struct Server {
     pub recipes: crate::recipes::Recipes,
     /// What mobs leave behind.
     pub mob_loot: crate::loot::LootTables,
+    /// The furnaces that are currently burning.
+    pub furnaces: crate::furnaces::Furnaces,
     /// Items on the ground, mobs and other non-player entities.
     pub entities: Mutex<crate::world_entities::Entities>,
     pub voice: Option<VoiceServer>,
@@ -349,6 +351,7 @@ impl Server {
                 None => server.world().insert_chunk(generator.generate(pos, range)),
             }
             crate::world_entities::load_chunk(&server, pos);
+            crate::furnaces::load_chunk(&server, pos);
             server.generating.lock().unwrap_or_else(|e| e.into_inner()).remove(&pos);
         });
     }
@@ -430,6 +433,7 @@ impl Server {
             crate::world_entities::tick(&self);
             crate::survival::tick(&self, tick);
             crate::mobs::tick(&self, tick);
+            crate::furnaces::tick(&self);
             self.apply_mod_actions();
             self.tick_mods(tick);
 
@@ -646,6 +650,7 @@ impl Server {
             crate::playerdata::save(self, &player);
         }
         crate::world_entities::save_all(self);
+        crate::furnaces::save_all(self);
         tracing::info!("{why}: saved {chunks} chunks in {} ms", started.elapsed().as_millis());
     }
 
