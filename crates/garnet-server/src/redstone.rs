@@ -44,13 +44,43 @@ pub fn is_redstone(name: &str) -> bool {
     matches!(
         short,
         "redstone_wire" | "redstone_torch" | "redstone_wall_torch" | "redstone_block" | "repeater" | "redstone_lamp" | "lever"
-    ) || short.ends_with("_piston")
+    ) || matches!(short, "observer" | "comparator" | "dispenser" | "dropper" | "note_block" | "tnt")
+        || short.ends_with("_piston")
         || short == "piston"
         || short.ends_with("_button")
         || short.ends_with("_door")
         || short.ends_with("_trapdoor")
         || short.ends_with("_fence_gate")
         || short.ends_with("_pressure_plate")
+}
+
+/// How many blocks redstone may look at in one tick. A circuit that keeps
+/// changing its own mind would otherwise hold the whole server up.
+const REFRESH_BUDGET: u32 = 4000;
+
+thread_local! {
+    static REFRESHES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Starts a fresh budget; called once a tick.
+pub fn new_tick() {
+    REFRESHES.with(|count| count.set(0));
+}
+
+/// Takes one from the budget. False once it has run out.
+fn afford() -> bool {
+    REFRESHES.with(|count| {
+        let used = count.get();
+        if used >= REFRESH_BUDGET {
+            if used == REFRESH_BUDGET {
+                count.set(used + 1);
+                tracing::warn!("redstone hit its update budget this tick; something is oscillating");
+            }
+            return false;
+        }
+        count.set(used + 1);
+        true
+    })
 }
 
 /// Something changed here: look again at this block and everything that
@@ -72,19 +102,36 @@ pub fn update(server: &Arc<Server>, pos: BlockPos) {
 
 /// Recomputes one block: wire strength, a lamp's glow, a door's latch.
 fn refresh(server: &Arc<Server>, pos: BlockPos) {
+    if !afford() {
+        return;
+    }
     let Some(block) = block_at(server, pos) else { return };
     let short = short_name(&block.name).to_owned();
     match short.as_str() {
-        "redstone_wire" => refresh_wire(server, pos, &block),
-        "redstone_torch" | "redstone_wall_torch" => refresh_torch(server, pos, &block),
-        "repeater" => refresh_repeater(server, pos, &block),
-        "piston" | "sticky_piston" => refresh_piston(server, pos, &block),
+        "redstone_wire" => {
+            server.doing("redstone: wire");
+            refresh_wire(server, pos, &block)
+        }
+        "redstone_torch" | "redstone_wall_torch" => { server.doing("redstone: torch"); refresh_torch(server, pos, &block) },
+        "repeater" => { server.doing("redstone: repeater"); refresh_repeater(server, pos, &block) },
+        "piston" | "sticky_piston" => { server.doing("redstone: piston"); refresh_piston(server, pos, &block) },
+        // An observer's pulse is timed, not recomputed: see `pulse_over`.
+        "observer" => {}
+        "comparator" => { server.doing("redstone: comparator"); refresh_comparator(server, pos, &block) },
+        "dispenser" | "dropper" => { server.doing("redstone: dispenser"); refresh_dispenser(server, pos, &block) },
+        "note_block" => { server.doing("redstone: note block"); refresh_note_block(server, pos, &block) },
+        "tnt" => {
+            if incoming(server, pos) > 0 {
+                crate::explosions::prime(server, pos);
+            }
+        }
         "redstone_lamp" => {
+            server.doing("redstone: lamp");
             let lit = incoming(server, pos) > 0;
             set_prop(server, pos, &block, "lit", lit);
         }
         _ if short.ends_with("_door") || short.ends_with("_trapdoor") || short.ends_with("_fence_gate") => {
-            refresh_openable(server, pos, &block);
+            { server.doing("redstone: door"); refresh_openable(server, pos, &block) }
         }
         _ => {}
     }
@@ -311,6 +358,219 @@ fn standing_on(server: &Arc<Server>, pos: BlockPos) -> bool {
     entities.by_id.values().any(|e| !e.is_item() && on(e.x, e.y, e.z))
 }
 
+/// An observer watches the block in front of it and, when that changes,
+/// sends a short pulse out the back.
+pub fn watch_change(server: &Arc<Server>, changed: BlockPos) {
+    for (dx, dy, dz) in ALL {
+        let side = changed.offset(dx, dy, dz);
+        let Some(block) = block_at(server, side) else { continue };
+        if short_name(&block.name) != "observer" {
+            continue;
+        }
+        let facing = block.props.get("facing").cloned().unwrap_or_default();
+        if ahead(side, &facing) != changed {
+            continue;
+        }
+        if block.props.get("powered").map(String::as_str) == Some("true") {
+            continue;
+        }
+        set_prop(server, side, &block, "powered", true);
+        server.schedule_block(side, 2);
+        // Tell the neighbours, but leave the observer itself alone or the
+        // pulse would be cleared in the same tick it started.
+        for (ex, ey, ez) in ALL {
+            refresh(server, side.offset(ex, ey, ez));
+        }
+    }
+}
+
+/// The two ticks are up: the pulse ends.
+pub fn pulse_over(server: &Arc<Server>, pos: BlockPos) {
+    let Some(block) = block_at(server, pos) else { return };
+    if block.props.get("powered").map(String::as_str) != Some("true") {
+        return;
+    }
+    set_prop(server, pos, &block, "powered", false);
+    for (dx, dy, dz) in ALL {
+        refresh(server, pos.offset(dx, dy, dz));
+    }
+}
+
+/// A comparator reads what is behind it, or how full the container there
+/// is, and holds that against whatever comes in from the sides.
+fn refresh_comparator(server: &Arc<Server>, pos: BlockPos, block: &Block) {
+    let wanted = comparator_output(server, pos);
+    let powered_now = block.props.get("powered").map(String::as_str) == Some("true");
+    let stored = crate::containers::block_entity_at(server, pos)
+        .and_then(|c| c.get_i32("OutputSignal"))
+        .unwrap_or(0);
+    if wanted == stored && (wanted > 0) == powered_now {
+        return;
+    }
+    crate::containers::set_block_entity_numbers(server, pos, &[("OutputSignal", wanted)]);
+    set_prop(server, pos, block, "powered", wanted > 0);
+    for (dx, dy, dz) in ALL {
+        server.schedule_block(pos.offset(dx, dy, dz), 2);
+    }
+}
+
+/// What a comparator would give out right now.
+fn comparator_output(server: &Arc<Server>, pos: BlockPos) -> i32 {
+    let Some(block) = block_at(server, pos) else { return 0 };
+    let facing = block.props.get("facing").cloned().unwrap_or_else(|| "north".to_owned());
+    let back = behind(pos, &facing);
+    let mut rear = source_power(server, back, pos).max(wire_power(server, back));
+    if let Some(fullness) = container_signal(server, back) {
+        rear = rear.max(fullness);
+    }
+    // The two sides only ever hold it back.
+    let sides = match facing.as_str() {
+        "north" | "south" => [pos.offset(1, 0, 0), pos.offset(-1, 0, 0)],
+        _ => [pos.offset(0, 0, 1), pos.offset(0, 0, -1)],
+    };
+    let side_power = sides
+        .iter()
+        .map(|side| source_power(server, *side, pos).max(wire_power(server, *side)))
+        .max()
+        .unwrap_or(0);
+    if block.props.get("mode").map(String::as_str) == Some("subtract") {
+        (rear - side_power).max(0)
+    } else if side_power > rear {
+        0
+    } else {
+        rear
+    }
+}
+
+/// How full a container reads to a comparator: nothing at all is 0, a
+/// single item is 1, and full is 15.
+fn container_signal(server: &Arc<Server>, pos: BlockPos) -> Option<i32> {
+    let block = block_at(server, pos)?;
+    let short = short_name(&block.name);
+    let slots = match short {
+        "chest" | "trapped_chest" | "barrel" | "dispenser" | "dropper" => 27,
+        "hopper" => 5,
+        "furnace" | "blast_furnace" | "smoker" => 3,
+        _ if short.ends_with("shulker_box") => 27,
+        _ => return None,
+    };
+    let slots = if short == "dispenser" || short == "dropper" { 9 } else { slots };
+    let items = crate::containers::read_items(server, pos, slots);
+    let mut filled = 0.0f32;
+    for stack in items.iter().filter(|s| !s.is_empty()) {
+        let name = crate::items::item_name(server, stack.item);
+        let max = crate::inventory::max_stack_size(&name).max(1) as f32;
+        filled += stack.count as f32 / max;
+    }
+    if filled <= 0.0 {
+        return Some(0);
+    }
+    Some((1.0 + filled / slots as f32 * 14.0).floor() as i32)
+}
+
+/// A dispenser or dropper fires once each time its signal arrives.
+fn refresh_dispenser(server: &Arc<Server>, pos: BlockPos, block: &Block) {
+    let powered = incoming(server, pos) > 0;
+    let triggered = block.props.get("triggered").map(String::as_str) == Some("true");
+    if powered == triggered {
+        return;
+    }
+    set_prop(server, pos, block, "triggered", powered);
+    if powered {
+        fire(server, pos, block);
+    }
+}
+
+/// Throws out one item from a random full slot.
+fn fire(server: &Arc<Server>, pos: BlockPos, block: &Block) {
+    let mut items = crate::containers::read_items(server, pos, 9);
+    let full: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, stack)| !stack.is_empty())
+        .map(|(i, _)| i)
+        .collect();
+    if full.is_empty() {
+        return;
+    }
+    let slot = full[rand::random_range(0..full.len())];
+    let mut thrown = items[slot].clone();
+    thrown.count = 1;
+    items[slot].count -= 1;
+    if items[slot].count <= 0 {
+        items[slot] = garnet_protocol::packets::play::items::ItemStack::EMPTY;
+    }
+    crate::containers::write_items(server, pos, &items);
+
+    let facing = block.props.get("facing").cloned().unwrap_or_else(|| "north".to_owned());
+    let out = step(pos, &facing);
+    let (vx, vy, vz) = match facing.as_str() {
+        "north" => (0.0, 0.1, -0.3),
+        "south" => (0.0, 0.1, 0.3),
+        "west" => (-0.3, 0.1, 0.0),
+        "east" => (0.3, 0.1, 0.0),
+        "up" => (0.0, 0.4, 0.0),
+        _ => (0.0, -0.3, 0.0),
+    };
+    crate::world_entities::drop_item(
+        server,
+        thrown,
+        out.x as f64 + 0.5,
+        out.y as f64 + 0.5,
+        out.z as f64 + 0.5,
+        (vx, vy, vz),
+        10,
+    );
+}
+
+/// A note block sounds once each time its signal arrives.
+fn refresh_note_block(server: &Arc<Server>, pos: BlockPos, block: &Block) {
+    let powered = incoming(server, pos) > 0;
+    let was = block.props.get("powered").map(String::as_str) == Some("true");
+    if powered == was {
+        return;
+    }
+    set_prop(server, pos, block, "powered", powered);
+    if powered {
+        play_note(server, pos, block);
+    }
+}
+
+/// Plays the note this block is set to.
+fn play_note(server: &Arc<Server>, pos: BlockPos, block: &Block) {
+    play_tuned(server, pos, &block.name, &block.props);
+}
+
+/// The same, for a block someone just tapped.
+pub fn play_tuned(server: &Arc<Server>, pos: BlockPos, name: &str, props: &BTreeMap<String, String>) {
+    let _ = name;
+    let instrument = props.get("instrument").cloned().unwrap_or_else(|| "harp".to_owned());
+    let note: i32 = props.get("note").and_then(|n| n.parse().ok()).unwrap_or(0);
+    let sound = garnet_protocol::Identifier::parse(&format!("minecraft:block.note_block.{instrument}"));
+    let Some(sound) = sound else { return };
+    let registry_id = server.data.registries.id_of("sound_event", &sound.to_string());
+    server.broadcast_near(
+        pos.chunk(),
+        &garnet_protocol::packets::play::clientbound::Sound {
+            name: sound,
+            registry_id,
+            source: garnet_protocol::packets::play::clientbound::SoundSource::Records,
+            x: pos.x as f64 + 0.5,
+            y: pos.y as f64 + 0.5,
+            z: pos.z as f64 + 0.5,
+            volume: 3.0,
+            pitch: 2.0f32.powf((note - 12) as f32 / 12.0),
+            seed: rand::random(),
+        },
+        None,
+    );
+}
+
+/// Lets other modules reach a block's name and properties.
+pub fn describe(server: &Arc<Server>, pos: BlockPos) -> Option<(String, BTreeMap<String, String>)> {
+    block_at(server, pos).map(|block| (block.name, block.props))
+}
+
 /// How far a piston can shove, and what will not budge.
 const PUSH_LIMIT: usize = 12;
 
@@ -470,6 +730,22 @@ fn source_power(server: &Arc<Server>, pos: BlockPos, towards: BlockPos) -> i32 {
         "repeater" => {
             let facing = block.props.get("facing").cloned().unwrap_or_default();
             if on("powered") && ahead(pos, &facing) == towards {
+                MAX_POWER
+            } else {
+                0
+            }
+        }
+        "comparator" => {
+            let facing = block.props.get("facing").cloned().unwrap_or_default();
+            if ahead(pos, &facing) == towards {
+                comparator_output(server, pos)
+            } else {
+                0
+            }
+        }
+        "observer" => {
+            let facing = block.props.get("facing").cloned().unwrap_or_default();
+            if on("powered") && behind(pos, &facing) == towards {
                 MAX_POWER
             } else {
                 0

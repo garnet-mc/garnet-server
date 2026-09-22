@@ -509,6 +509,11 @@ pub fn write_items(server: &Server, pos: BlockPos, items: &[ItemStack]) {
         chunk.block_entities.push(compound);
     }
     chunk.dirty = true;
+    drop(world);
+    // A comparator beside it is reading how full this is.
+    for (dx, dy, dz) in [(1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, 1, 0), (0, -1, 0)] {
+        server.schedule_block(pos.offset(dx, dy, dz), 2);
+    }
 }
 
 /// Tips a broken container's contents onto the ground.
@@ -567,6 +572,17 @@ pub fn block_entity_at(server: &Server, pos: BlockPos) -> Option<NbtCompound> {
 
 /// Writes plain numbers into a block entity, leaving its items alone.
 pub fn set_block_entity_numbers(server: &Server, pos: BlockPos, values: &[(&str, i32)]) {
+    // Work out the name before taking the lock: reading the world again
+    // while holding it would wait on this thread's own lock.
+    let block_entity_id = {
+        let state = server.world().get_block(pos).unwrap_or(0);
+        server
+            .data
+            .blocks
+            .block_of_state(state as i32)
+            .map(|b| b.name.clone())
+            .unwrap_or_else(|| "minecraft:furnace".to_owned())
+    };
     let mut world = server.world();
     let Ok(chunk) = world.chunk_mut(pos.chunk()) else { return };
     let existing = chunk.block_entities.iter_mut().find(|be| {
@@ -579,16 +595,7 @@ pub fn set_block_entity_numbers(server: &Server, pos: BlockPos, values: &[(&str,
             fresh.put("x", pos.x);
             fresh.put("y", pos.y);
             fresh.put("z", pos.z);
-            let name = {
-                let state = server.world().get_block(pos).unwrap_or(0);
-                server
-                    .data
-                    .blocks
-                    .block_of_state(state as i32)
-                    .map(|b| b.name.clone())
-                    .unwrap_or_else(|| "minecraft:furnace".to_owned())
-            };
-            fresh.put("id", name.as_str());
+            fresh.put("id", block_entity_id.as_str());
             chunk.block_entities.push(fresh);
             chunk.block_entities.last_mut().expect("just pushed")
         }

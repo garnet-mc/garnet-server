@@ -21,16 +21,39 @@ const NIGHT_END: i64 = 23460;
 
 /// Runs the block ticks that have come due, then gives a few random
 /// blocks near each player their chance to grow.
+/// At most this many changed blocks are looked at in one tick; the rest
+/// wait their turn rather than holding the tick open.
+const CHANGES_PER_TICK: usize = 4096;
+
 pub fn tick(server: &Arc<Server>, tick: u64) {
+    crate::redstone::new_tick();
     let due: Vec<BlockPos> = {
         let mut ticks = server.block_ticks.lock().unwrap_or_else(|e| e.into_inner());
         let (ready, waiting): (Vec<_>, Vec<_>) = ticks.drain(..).partition(|(_, when)| *when <= tick);
         *ticks = waiting;
         ready.into_iter().map(|(pos, _)| pos).collect()
     };
+    server.doing("blocks: scheduled");
     for pos in due {
         scheduled(server, pos);
     }
+    // Observers look at what changed since the last tick.
+    let changed: Vec<BlockPos> = {
+        let mut list = server.changed_blocks.lock().unwrap_or_else(|e| e.into_inner());
+        if list.len() > CHANGES_PER_TICK {
+            let rest = list.split_off(CHANGES_PER_TICK);
+            let taken = std::mem::replace(&mut *list, rest);
+            tracing::warn!("{} blocks changed at once; the rest wait for the next tick", taken.len());
+            taken
+        } else {
+            std::mem::take(&mut *list)
+        }
+    };
+    server.doing("blocks: observers");
+    for pos in changed {
+        crate::redstone::watch_change(server, pos);
+    }
+    server.doing("blocks: random ticks");
     let speed = server
         .rules
         .read()
@@ -99,6 +122,30 @@ pub fn interact(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos, block
     }
     if short.ends_with("_bed") {
         return sleep(server, player, pos);
+    }
+    if short == "note_block" {
+        // Each tap moves it up a note, the way tuning one works.
+        let note: i32 = props.get("note").and_then(|n| n.parse().ok()).unwrap_or(0);
+        let mut next = props.clone();
+        next.insert("note".to_owned(), ((note + 1) % 25).to_string());
+        if let Some(state) = server.data.blocks.state_with(block, &next) {
+            server.set_block(pos, state as u32);
+        }
+        if let Some((name, tuned)) = crate::redstone::describe(server, pos) {
+            crate::redstone::play_tuned(server, pos, &name, &tuned);
+        }
+        return true;
+    }
+    if short == "comparator" {
+        // And a tap on a comparator swaps what it does.
+        let mode = props.get("mode").map(String::as_str).unwrap_or("compare");
+        let mut next = props.clone();
+        next.insert("mode".to_owned(), if mode == "compare" { "subtract" } else { "compare" }.to_owned());
+        if let Some(state) = server.data.blocks.state_with(block, &next) {
+            server.set_block(pos, state as u32);
+        }
+        crate::redstone::update(server, pos);
+        return true;
     }
     false
 }
@@ -240,14 +287,22 @@ pub fn scheduled(server: &Arc<Server>, pos: BlockPos) {
     };
     let short = name.strip_prefix("minecraft:").unwrap_or(&name);
     if short == "water" || short == "lava" {
+        server.doing("blocks: fluid");
         crate::fluids::tick(server, pos);
         return;
     }
     if short.ends_with("_pressure_plate") {
+        server.doing("blocks: plate");
         crate::redstone::check_plate(server, pos);
         return;
     }
+    if short == "observer" {
+        server.doing("blocks: observer");
+        crate::redstone::pulse_over(server, pos);
+        return;
+    }
     if crate::redstone::is_redstone(&name) {
+        server.doing("blocks: redstone");
         crate::redstone::update(server, pos);
     }
     if short.ends_with("_button") && props.get("powered").map(String::as_str) == Some("true") {
@@ -256,6 +311,7 @@ pub fn scheduled(server: &Arc<Server>, pos: BlockPos) {
         return;
     }
     if falls(server, pos) {
+        server.doing("blocks: falling");
         fall(server, pos, state);
     }
 }

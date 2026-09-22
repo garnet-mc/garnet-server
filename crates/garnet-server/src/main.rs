@@ -18,6 +18,7 @@ mod containers;
 mod config;
 mod entities;
 mod entity_commands;
+mod explosions;
 mod fluids;
 mod functions;
 mod furnaces;
@@ -183,6 +184,10 @@ async fn async_main(cli: Cli) -> Result<()> {
             mob_loot: loot::LootTables::entities(&data),
             furnaces: furnaces::Furnaces::new(),
             block_ticks: Mutex::new(Vec::new()),
+            fuses: Mutex::new(Vec::new()),
+            changed_blocks: Mutex::new(Vec::new()),
+            stage: std::sync::atomic::AtomicUsize::new(0),
+            stage_len: std::sync::atomic::AtomicUsize::new(0),
             entities: Mutex::new(world_entities::Entities::new(&root.join(&config.world.name))),
             boards: Mutex::new(boards::Boards::load(&root.join(&config.world.name))),
             voice,

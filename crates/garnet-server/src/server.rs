@@ -27,7 +27,7 @@ use garnet_voice::VoiceServer;
 use garnet_world::World;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
@@ -86,6 +86,13 @@ pub struct Server {
     pub furnaces: crate::furnaces::Furnaces,
     /// Blocks waiting for their turn: a button to pop out, sand to fall.
     pub block_ticks: Mutex<Vec<(garnet_protocol::BlockPos, u64)>>,
+    /// Lit fuses, and the tick each one runs out.
+    pub fuses: Mutex<Vec<(garnet_protocol::BlockPos, u64)>>,
+    /// Blocks that changed this tick, for the observers watching them.
+    pub changed_blocks: Mutex<Vec<garnet_protocol::BlockPos>>,
+    /// What the tick is doing right now, as a pointer to a static string.
+    pub stage: AtomicUsize,
+    pub stage_len: AtomicUsize,
     /// Items on the ground, mobs and other non-player entities.
     pub entities: Mutex<crate::world_entities::Entities>,
     pub voice: Option<VoiceServer>,
@@ -112,6 +119,14 @@ impl Server {
     /// so a write attempted in the middle of a read is caught instead of
     /// quietly waiting on itself.
     pub fn world(&self) -> WorldGuard<'_> {
+        // Taking it twice on one thread waits on this thread's own lock:
+        // say which caller did it rather than freezing the server.
+        debug_assert!(!Self::reading_world(), "the world is already locked by this thread");
+        if Self::reading_world() {
+            tracing::error!(
+                "the world was locked twice by one thread: read what you need, drop the guard, then write"
+            );
+        }
         let inner = self.world.lock().unwrap_or_else(|e| e.into_inner());
         WORLD_DEPTH.with(|depth| depth.set(depth.get() + 1));
         WorldGuard { inner }
@@ -399,6 +414,7 @@ impl Server {
             // to go.
             self.schedule_block(pos, 2);
             self.schedule_block(pos.offset(0, 1, 0), 2);
+            self.changed_blocks.lock().unwrap_or_else(|e| e.into_inner()).push(pos);
             for (dx, dy, dz) in [(1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, 1, 0), (0, -1, 0)] {
                 self.schedule_block(pos.offset(dx, dy, dz), 5);
             }
@@ -450,6 +466,23 @@ impl Server {
 
     // ---- the tick loop ----
 
+    /// Notes what the tick is busy with, so a stall can say where it
+    /// stopped rather than only that it did.
+    pub fn doing(&self, what: &'static str) {
+        self.stage.store(what.as_ptr() as usize, Ordering::Relaxed);
+        self.stage_len.store(what.len(), Ordering::Relaxed);
+    }
+
+    fn stage_name(&self) -> String {
+        let ptr = self.stage.load(Ordering::Relaxed) as *const u8;
+        let len = self.stage_len.load(Ordering::Relaxed);
+        if ptr.is_null() || len == 0 {
+            return "starting up".to_owned();
+        }
+        // The pointer is always to a 'static string this binary owns.
+        unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr, len)) }.to_owned()
+    }
+
     /// Watches the tick counter from outside the tick loop: if the server
     /// stops ticking, something is stuck, and saying so beats going quiet.
     pub fn watch_ticks(self: &Arc<Self>) {
@@ -466,7 +499,8 @@ impl Server {
                         stalled += 5;
                         if stalled % 15 == 0 {
                             tracing::error!(
-                                "the server has not ticked for {stalled}s (stuck at tick {now});                                  players will see the world frozen"
+                                "the server has not ticked for {stalled}s (stuck at tick {now} during {});                                  players will see the world frozen",
+                                server.stage_name()
                             );
                         }
                     } else {
@@ -498,14 +532,22 @@ impl Server {
                 self.tick_weather();
             }
             self.tick_players(tick);
+            self.doing("light");
             self.tick_light();
             crate::vanilla_commands::tick_effects(&self, tick);
             crate::functions::tick(&self, tick);
+            self.doing("entities");
             crate::world_entities::tick(&self);
+            self.doing("survival");
             crate::survival::tick(&self, tick);
+            self.doing("mobs");
             crate::mobs::tick(&self, tick);
+            self.doing("furnaces");
             crate::furnaces::tick(&self);
+            self.doing("blocks");
             crate::blocks::tick(&self, tick);
+            self.doing("explosions");
+            crate::explosions::tick(&self);
             self.apply_mod_actions();
             self.tick_mods(tick);
 

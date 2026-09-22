@@ -352,6 +352,11 @@ fn entity_position(server: &Arc<Server>, entity_id: i32) -> Option<(i32, i32, i3
     Some((entity.x.floor() as i32, entity.y.floor() as i32, entity.z.floor() as i32))
 }
 
+/// Hurts an entity from something other than a swing: a blast, say.
+pub fn damage_entity_directly(server: &Arc<Server>, entity_id: i32, damage: f32, from: (f64, f64)) {
+    damage_entity(server, entity_id, damage, from);
+}
+
 /// Hits a mob or other non-player entity.
 fn damage_entity(server: &Arc<Server>, entity_id: i32, damage: f32, from: (f64, f64)) {
     let (dead, pos, kind) = {
