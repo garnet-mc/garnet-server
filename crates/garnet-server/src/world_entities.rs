@@ -1,11 +1,10 @@
 //! Entities that are not players: dropped items, summoned mobs and the
 //! rest. They have a position, fall with gravity and land on blocks, can be
 //! ridden, and are saved per chunk in `world/entities/` region files with
-//! vanilla's layout. Mobs do not think yet: they stand where they are put.
+//! vanilla's layout. What mobs do with themselves lives in `mobs`.
 //!
-//! Item entities are the one kind with behaviour: they drift a little when
-//! thrown, settle on the ground, and jump into the inventory of a player
-//! who walks up to them.
+//! Item entities drift a little when thrown, settle on the ground, and
+//! jump into the inventory of a player who walks up to them.
 
 use crate::items::{item_id, item_name, max_stack};
 use crate::player::Player;
@@ -169,6 +168,15 @@ pub fn spawn(server: &Arc<Server>, mut entity: Entity) -> i32 {
 }
 
 /// Removes an entity everywhere.
+/// Replaces what an item entity is carrying, for a hopper that took part
+/// of the stack.
+pub fn set_item(server: &Arc<Server>, id: i32, stack: garnet_protocol::packets::play::items::ItemStack) {
+    let mut entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(entity) = entities.by_id.get_mut(&id) {
+        entity.item = Some(stack);
+    }
+}
+
 pub fn despawn(server: &Arc<Server>, id: i32) -> Option<Entity> {
     let entity = server.entities.lock().unwrap_or_else(|e| e.into_inner()).remove(id)?;
     for player in server.online_players() {
@@ -430,11 +438,42 @@ fn step_physics(server: &Server, entity: &mut Entity) -> bool {
     moved
 }
 
+/// Whether something falling would land here. Light is no guide to this:
+/// glass and hoppers let light through and still hold an item up, while
+/// grass and torches are solid to the eye and not to the foot.
 fn is_solid(server: &Server, x: f64, y: f64, z: f64) -> bool {
     let pos = BlockPos::new(x.floor() as i32, y.floor() as i32, z.floor() as i32);
     let state = server.world().get_block(pos).unwrap_or(0);
     let blocks = &server.data.blocks;
-    !blocks.is_air(state as i32) && !blocks.is_liquid(state as i32) && server.data.light.opacity(state) > 0
+    if blocks.is_air(state as i32) || blocks.is_liquid(state as i32) {
+        return false;
+    }
+    let Some(block) = blocks.block_of_state(state as i32) else { return false };
+    !walks_through(block.name.strip_prefix("minecraft:").unwrap_or(&block.name))
+}
+
+/// The blocks nothing stands on.
+fn walks_through(short: &str) -> bool {
+    matches!(
+        short,
+        "torch" | "wall_torch" | "soul_torch" | "soul_wall_torch" | "redstone_wire" | "redstone_torch"
+            | "redstone_wall_torch" | "lever" | "tripwire" | "tripwire_hook" | "string" | "ladder" | "vine"
+            | "dead_bush" | "cobweb" | "nether_portal" | "end_portal" | "light" | "structure_void" | "kelp"
+            | "kelp_plant" | "seagrass" | "tall_seagrass" | "sugar_cane" | "bamboo_sapling" | "fire" | "soul_fire"
+            | "wheat" | "carrots" | "potatoes" | "beetroots" | "nether_wart" | "sweet_berry_bush" | "cocoa"
+            | "melon_stem" | "pumpkin_stem" | "attached_melon_stem" | "attached_pumpkin_stem" | "glow_lichen"
+    ) || short.ends_with("_grass")
+        || short.ends_with("_fern")
+        || short.ends_with("_flower")
+        || short.ends_with("_sapling")
+        || short.ends_with("_button")
+        || short.ends_with("_rail")
+        || short == "rail"
+        || short.ends_with("_sign")
+        || short.ends_with("_banner")
+        || short.ends_with("_pressure_plate")
+        || short.ends_with("_coral_fan")
+        || short.ends_with("_torch")
 }
 
 fn solid_below(server: &Server, x: f64, y: f64, z: f64) -> bool {

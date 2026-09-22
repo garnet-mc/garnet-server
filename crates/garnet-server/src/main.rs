@@ -21,6 +21,7 @@ mod entity_commands;
 mod explosions;
 mod fluids;
 mod functions;
+mod hoppers;
 mod furnaces;
 mod inventory;
 mod items;

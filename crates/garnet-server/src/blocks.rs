@@ -296,6 +296,11 @@ pub fn scheduled(server: &Arc<Server>, pos: BlockPos) {
         crate::redstone::check_plate(server, pos);
         return;
     }
+    if short == "hopper" {
+        server.doing("blocks: hopper");
+        crate::hoppers::tick(server, pos);
+        return;
+    }
     if short == "observer" {
         server.doing("blocks: observer");
         crate::redstone::pulse_over(server, pos);

@@ -379,6 +379,7 @@ impl Server {
             }
             crate::world_entities::load_chunk(&server, pos);
             crate::furnaces::load_chunk(&server, pos);
+            crate::hoppers::load_chunk(&server, pos);
             server.generating.lock().unwrap_or_else(|e| e.into_inner()).remove(&pos);
         });
     }
