@@ -155,6 +155,8 @@ fn cmd_summon(server: &Arc<Server>, sender: &CommandSender, args: &[String]) -> 
     if nbt.contains("NoGravity:1") || nbt.contains("NoGravity:true") {
         entity.no_gravity = true;
     }
+    entity.persistent = true;
+    entity.health = crate::mobs::health_of(&entity.kind);
     let id = world_entities::spawn(server, entity);
     sender.reply(Text::new(format!("Summoned new {} (id {id}).", kind.trim_start_matches("minecraft:"))));
     Ok(())

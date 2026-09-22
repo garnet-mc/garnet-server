@@ -28,8 +28,17 @@ pub struct LootTables {
 
 impl LootTables {
     pub fn new(data: &GameData) -> Self {
+        Self::in_dir(data, "blocks")
+    }
+
+    /// The tables for what mobs leave behind.
+    pub fn entities(data: &GameData) -> Self {
+        Self::in_dir(data, "entities")
+    }
+
+    fn in_dir(data: &GameData, sub: &str) -> Self {
         Self {
-            dir: data.version_dir.join("datapack").join("minecraft").join("loot_table").join("blocks"),
+            dir: data.version_dir.join("datapack").join("minecraft").join("loot_table").join(sub),
             cache: Mutex::new(HashMap::new()),
         }
     }

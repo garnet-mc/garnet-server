@@ -42,6 +42,12 @@ pub struct Entity {
     pub pickup_delay: u32,
     pub age: u32,
     pub no_gravity: bool,
+    /// Ticks until this mob may swing again.
+    pub attack_cooldown: u32,
+    /// Set when the last move ran into something, so mobs know to hop.
+    pub blocked_ahead: bool,
+    /// Summoned or named mobs stay put instead of despawning.
+    pub persistent: bool,
 }
 
 impl Entity {
@@ -196,6 +202,9 @@ pub fn new_entity(server: &Server, kind: &str, x: f64, y: f64, z: f64) -> Option
         pickup_delay: 0,
         age: 0,
         no_gravity: false,
+        attack_cooldown: 0,
+        blocked_ahead: false,
+        persistent: false,
     })
 }
 
@@ -383,13 +392,16 @@ fn step_physics(server: &Server, entity: &mut Entity) -> bool {
     let mut ny = entity.y + vy;
     let mut nz = entity.z + vz;
     // Walls: give up the horizontal move that would enter a solid block.
+    entity.blocked_ahead = false;
     if is_solid(server, nx, entity.y + 0.1, entity.z) {
         nx = entity.x;
         vx = 0.0;
+        entity.blocked_ahead = true;
     }
     if is_solid(server, nx, entity.y + 0.1, nz) {
         nz = entity.z;
         vz = 0.0;
+        entity.blocked_ahead = true;
     }
     // Floor: land on top of the block below.
     if vy < 0.0 && is_solid(server, nx, ny, nz) {

@@ -314,6 +314,16 @@ pub fn attack(server: &Arc<Server>, attacker: &Arc<Player>, target_id: i32, tick
     let damage = weapon * charge + if sprinting && charge > 0.9 { 1.0 } else { 0.0 };
     attacker.lock().exhaustion += 0.1;
 
+    // You can only hit what you can reach; the client has no business
+    // swinging at something across the world.
+    if let Some(spot) = entity_position(server, target_id) {
+        let eyes = attacker.lock().eye_position();
+        let creative = matches!(mode, GameMode::Creative);
+        if server.anticheat.check_reach(eyes, spot, creative).is_some() {
+            return;
+        }
+    }
+
     if let Some(target) = server.online_players().into_iter().find(|p| p.entity_id == target_id) {
         if target.uuid == attacker.uuid {
             return;
@@ -327,9 +337,20 @@ pub fn attack(server: &Arc<Server>, attacker: &Arc<Player>, target_id: i32, tick
     }
 }
 
+/// Where an entity is, player or not, as whole blocks for the reach check.
+fn entity_position(server: &Arc<Server>, entity_id: i32) -> Option<(i32, i32, i32)> {
+    if let Some(player) = server.online_players().into_iter().find(|p| p.entity_id == entity_id) {
+        let s = player.lock();
+        return Some((s.x.floor() as i32, s.y.floor() as i32, s.z.floor() as i32));
+    }
+    let entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
+    let entity = entities.by_id.get(&entity_id)?;
+    Some((entity.x.floor() as i32, entity.y.floor() as i32, entity.z.floor() as i32))
+}
+
 /// Hits a mob or other non-player entity.
 fn damage_entity(server: &Arc<Server>, entity_id: i32, damage: f32, from: (f64, f64)) {
-    let (dead, pos) = {
+    let (dead, pos, kind) = {
         let mut entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
         let Some(entity) = entities.by_id.get_mut(&entity_id) else { return };
         if entity.kind == "minecraft:item" {
@@ -342,12 +363,39 @@ fn damage_entity(server: &Arc<Server>, entity_id: i32, damage: f32, from: (f64, 
         entity.velocity.0 += dx / len * 0.4;
         entity.velocity.1 = 0.36;
         entity.velocity.2 += dz / len * 0.4;
-        (entity.health <= 0.0, (entity.x, entity.y, entity.z))
+        (entity.health <= 0.0, (entity.x, entity.y, entity.z), entity.kind.clone())
     };
     let chunk = garnet_protocol::ChunkPos::from_block(pos.0.floor() as i32, pos.2.floor() as i32);
     server.broadcast_near(chunk, &cb::HurtAnimation { entity_id, yaw: 0.0 }, None);
     if dead {
+        drop_loot(server, &kind, pos);
         world_entities::despawn(server, entity_id);
+    }
+}
+
+/// What a dead mob leaves on the ground, from its own loot table.
+fn drop_loot(server: &Arc<Server>, kind: &str, pos: (f64, f64, f64)) {
+    let tool = crate::loot::Tool {
+        item_name: None,
+        silk_touch: false,
+        fortune: 0,
+    };
+    let drops = server.mob_loot.drops(kind, &std::collections::BTreeMap::new(), &tool);
+    for (name, count) in drops {
+        if count <= 0 {
+            continue; // a roll of nothing
+        }
+        let Some(id) = crate::items::item_id(server, &name) else { continue };
+        let spread = || (rand::random::<f64>() - 0.5) * 0.2;
+        world_entities::drop_item(
+            server,
+            garnet_protocol::packets::play::items::ItemStack::new(id, count),
+            pos.0,
+            pos.1 + 0.4,
+            pos.2,
+            (spread(), 0.15, spread()),
+            10,
+        );
     }
 }
 

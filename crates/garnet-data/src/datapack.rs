@@ -114,7 +114,7 @@ pub fn extract_datapack(inner_jar: &Path, target_dir: &Path) -> Result<()> {
         let is_registry = wanted.iter().any(|w| after_ns.starts_with(w));
         // Block loot tables decide what breaking a block drops, and the
         // recipes are what players craft with.
-        let is_block_loot = after_ns.starts_with("/loot_table/blocks/");
+        let is_block_loot = after_ns.starts_with("/loot_table/blocks/") || after_ns.starts_with("/loot_table/entities/");
         let is_recipe = after_ns.starts_with("/recipe/");
         if !is_tag && !is_registry && !is_block_loot && !is_recipe {
             continue;

@@ -80,6 +80,8 @@ pub struct Server {
     pub loot: crate::loot::LootTables,
     /// What the crafting grid can make.
     pub recipes: crate::recipes::Recipes,
+    /// What mobs leave behind.
+    pub mob_loot: crate::loot::LootTables,
     /// Items on the ground, mobs and other non-player entities.
     pub entities: Mutex<crate::world_entities::Entities>,
     pub voice: Option<VoiceServer>,
@@ -427,6 +429,7 @@ impl Server {
             crate::functions::tick(&self, tick);
             crate::world_entities::tick(&self);
             crate::survival::tick(&self, tick);
+            crate::mobs::tick(&self, tick);
             self.apply_mod_actions();
             self.tick_mods(tick);
 
