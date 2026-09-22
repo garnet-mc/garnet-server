@@ -9,7 +9,6 @@
 
 use garnet_data::GameData;
 use serde_json::Value;
-use std::collections::HashSet;
 
 /// One slot of a recipe: what may go in it.
 #[derive(Debug, Clone)]
@@ -70,7 +69,6 @@ pub struct Cooking {
     ingredient: Ingredient,
     pub result: String,
     pub time: i32,
-    pub experience: f32,
     /// Which furnaces will do it: a blast furnace only takes ores, a
     /// smoker only food.
     pub blasting: bool,
@@ -232,7 +230,6 @@ fn parse_cooking(json: &Value, kind: &str) -> Option<Cooking> {
         ingredient: Ingredient::parse(json.get("ingredient")?)?,
         result: parse_result(json)?.0,
         time: json.get("cookingtime").and_then(Value::as_i64).unwrap_or(200) as i32,
-        experience: json.get("experience").and_then(Value::as_f64).unwrap_or(0.0) as f32,
         blasting: kind == "minecraft:blasting",
         smoking: kind == "minecraft:smoking" || kind == "minecraft:campfire_cooking",
     })
@@ -313,16 +310,5 @@ pub fn grid_names(server: &crate::server::Server, stacks: &[garnet_protocol::pac
                 Some(crate::items::item_name(server, stack.item))
             }
         })
-        .collect()
-}
-
-/// Recipes whose result the client should already know about; unused for
-/// now, kept so the recipe book can be filled in later.
-pub fn known_results(recipes: &Recipes) -> HashSet<String> {
-    recipes
-        .shaped
-        .iter()
-        .map(|r| r.result.0.clone())
-        .chain(recipes.shapeless.iter().map(|r| r.result.0.clone()))
         .collect()
 }

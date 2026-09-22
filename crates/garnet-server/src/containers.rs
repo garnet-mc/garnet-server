@@ -8,7 +8,7 @@
 //! expects; clicks are applied to that combined view and written straight
 //! back to the block, so two people sharing a chest see the same thing.
 
-use crate::inventory::{Inventory, HOTBAR_START, MAIN_START};
+use crate::inventory::{HOTBAR_START, MAIN_START};
 use crate::player::Player;
 use crate::server::Server;
 use garnet_protocol::nbt::{NbtCompound, NbtTag};
@@ -24,7 +24,6 @@ pub struct OpenContainer {
     pub window_id: i32,
     /// How many slots belong to the window rather than the player.
     pub size: usize,
-    pub title: String,
     pub kind: Kind,
 }
 
@@ -56,11 +55,6 @@ fn container_size(block: &str) -> Option<(usize, &'static str, &'static str)> {
     Some(value)
 }
 
-/// True when this block keeps its contents in a block entity we handle.
-pub fn is_container(block: &str) -> bool {
-    container_size(block).is_some()
-}
-
 /// Right-clicking a container block: show it.
 pub fn open(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos, block: &str) -> bool {
     if block == "minecraft:crafting_table" {
@@ -82,7 +76,6 @@ pub fn open(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos, block: &s
             pos,
             window_id: id,
             size,
-            title: title.to_owned(),
             kind: Kind::Block,
         });
         id
@@ -112,7 +105,6 @@ fn open_furnace(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos, block
             pos,
             window_id: id,
             size: crate::furnaces::SLOTS,
-            title: "Furnace".to_owned(),
             kind: Kind::Furnace,
         });
         id
@@ -147,7 +139,6 @@ fn open_crafting(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos) -> b
             pos,
             window_id: id,
             size: 10,
-            title: "Crafting".to_owned(),
             kind: Kind::Crafting,
         });
         id
@@ -616,20 +607,4 @@ fn block_entity(server: &Server, pos: BlockPos) -> Option<NbtCompound> {
         .iter()
         .find(|be| be.get_i32("x") == Some(pos.x) && be.get_i32("y") == Some(pos.y) && be.get_i32("z") == Some(pos.z))
         .cloned()
-}
-
-/// Puts a stack into a container block, for hoppers and the like later on.
-pub fn insert(server: &Server, pos: BlockPos, block: &str, stack: ItemStack) -> Option<ItemStack> {
-    let (size, _, _) = container_size(block)?;
-    let mut items = read_items(server, pos, size);
-    let mut inventory = Inventory::from_slots(items.clone());
-    let name = crate::items::item_name(server, stack.item);
-    let left = inventory.add(stack, crate::inventory::max_stack_size(&name));
-    items = inventory.into_slots();
-    write_items(server, pos, &items);
-    if left.is_empty() {
-        None
-    } else {
-        Some(left)
-    }
 }

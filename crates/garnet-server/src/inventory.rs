@@ -55,21 +55,6 @@ impl Inventory {
     /// Adds items the way a pickup does: top up matching stacks in the
     /// hotbar and main inventory, then fill empty slots. Returns what did
     /// not fit.
-    /// Wraps a plain list of slots, for containers that are not a player.
-    pub fn from_slots(slots: Vec<ItemStack>) -> Self {
-        Self {
-            slots,
-            cursor: ItemStack::EMPTY,
-            state_id: 0,
-            drag: Vec::new(),
-            drag_button: 0,
-        }
-    }
-
-    pub fn into_slots(self) -> Vec<ItemStack> {
-        self.slots
-    }
-
     pub fn add(&mut self, mut stack: ItemStack, max_stack: i32) -> ItemStack {
         if stack.is_empty() {
             return ItemStack::EMPTY;

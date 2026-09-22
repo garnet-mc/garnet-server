@@ -75,9 +75,9 @@ pub fn tick(server: &Arc<Server>, tick: u64) {
 pub fn interact(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos, block: &str, props: &BTreeMap<String, String>) -> bool {
     let short = block.strip_prefix("minecraft:").unwrap_or(block);
     if short.ends_with("_door") || short.ends_with("_trapdoor") || short.ends_with("_fence_gate") {
-        // Iron stays shut without redstone, as it does in vanilla.
+        // Iron stays shut without a signal, as it does in vanilla.
         if short.starts_with("iron_") {
-            return false;
+            return true; // handled: the hand does nothing to it
         }
         return toggle(server, pos, block, props, "open");
     }
@@ -85,12 +85,17 @@ pub fn interact(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos, block
         let ticks = if short.contains("stone") { STONE_BUTTON_TICKS } else { WOODEN_BUTTON_TICKS };
         if toggle_to(server, pos, block, props, "powered", true) {
             server.schedule_block(pos, ticks);
+            crate::redstone::update(server, pos);
             return true;
         }
         return false;
     }
     if short.ends_with("_lever") || short == "lever" {
-        return toggle(server, pos, block, props, "powered");
+        let flipped = toggle(server, pos, block, props, "powered");
+        if flipped {
+            crate::redstone::update(server, pos);
+        }
+        return flipped;
     }
     if short.ends_with("_bed") {
         return sleep(server, player, pos);
@@ -206,11 +211,6 @@ fn morning(server: &Arc<Server>) {
     server.broadcast_chat(Text::new("Good morning"));
 }
 
-/// Anything the player woke up from: leaving a bed, mostly.
-pub fn wake(player: &Arc<Player>) {
-    player.lock().sleeping = false;
-}
-
 /// A block changed: see whether its neighbours care.
 pub fn changed(server: &Arc<Server>, pos: BlockPos) {
     // Only what sits directly above can fall into the gap.
@@ -243,8 +243,12 @@ pub fn scheduled(server: &Arc<Server>, pos: BlockPos) {
         crate::fluids::tick(server, pos);
         return;
     }
+    if crate::redstone::is_redstone(&name) {
+        crate::redstone::update(server, pos);
+    }
     if short.ends_with("_button") && props.get("powered").map(String::as_str) == Some("true") {
         toggle_to(server, pos, &name, &props, "powered", false);
+        crate::redstone::update(server, pos);
         return;
     }
     if falls(server, pos) {

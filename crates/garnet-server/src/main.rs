@@ -33,6 +33,7 @@ mod player;
 mod playerdata;
 mod rcon;
 mod recipes;
+mod redstone;
 mod rules;
 mod server;
 mod survival;
