@@ -131,7 +131,8 @@ pub async fn download_verified(url: &str, sha1: &str, target: &Path) -> Result<(
     let size_hint = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     tracing::info!("downloading {size_hint} from {url}");
 
-    let tmp: PathBuf = target.with_extension("part");
+    let file_name = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let tmp: PathBuf = target.with_file_name(format!("{file_name}.part"));
     let mut resp = client()?.get(url).send().await?.error_for_status()?;
     let mut file = tokio::fs::File::create(&tmp).await?;
     let mut hasher = Sha1::new();
