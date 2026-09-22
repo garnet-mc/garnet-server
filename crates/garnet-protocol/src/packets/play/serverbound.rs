@@ -248,6 +248,21 @@ impl ServerboundPacket for Attack {
     }
 }
 
+/// The name typed into an anvil.
+pub struct RenameItem {
+    pub name: String,
+}
+
+impl ServerboundPacket for RenameItem {
+    const NAME: &'static str = "rename_item";
+    const STATE: State = State::Play;
+    fn read(r: &mut PacketReader) -> Result<Self> {
+        Ok(Self {
+            name: r.read_string_max(50)?,
+        })
+    }
+}
+
 pub struct KeepAlive {
     pub id: i64,
 }

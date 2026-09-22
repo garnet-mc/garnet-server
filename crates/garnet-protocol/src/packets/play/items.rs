@@ -15,11 +15,13 @@ use crate::Result;
 /// Ids from `minecraft:data_component_type` (protocol 777).
 pub mod component {
     pub const MAX_STACK_SIZE: i32 = 1;
+    pub const MAX_DAMAGE: i32 = 2;
     pub const DAMAGE: i32 = 3;
     pub const UNBREAKABLE: i32 = 4;
     pub const CUSTOM_NAME: i32 = 6;
     pub const LORE: i32 = 11;
     pub const ENCHANTMENTS: i32 = 13;
+    pub const REPAIR_COST: i32 = 19;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -123,6 +125,12 @@ impl PatchBuilder {
         self
     }
 
+    /// Adds a component already encoded, for carrying one across.
+    pub fn raw(mut self, component: i32, data: Vec<u8>) -> Self {
+        self.added.push((component, data));
+        self
+    }
+
     pub fn remove(mut self, component: i32) -> Self {
         self.removed.push(component);
         self
@@ -163,13 +171,13 @@ pub fn components_in(patch: &[u8]) -> Option<(Vec<(i32, Vec<u8>)>, Vec<i32>)> {
         let id = r.read_varint().ok()?;
         let before = r.remaining();
         match id {
-            component::DAMAGE | component::MAX_STACK_SIZE => {
+            component::DAMAGE | component::MAX_STACK_SIZE | component::MAX_DAMAGE | component::REPAIR_COST => {
                 r.read_varint().ok()?;
             }
             component::UNBREAKABLE => {}
-            // A name is NBT, which we do not decode here; anything that
-            // carries one is left alone.
-            component::CUSTOM_NAME => return None,
+            component::CUSTOM_NAME => {
+                r.read_nbt().ok()?;
+            }
             component::ENCHANTMENTS => {
                 let n = r.read_varint().ok()?;
                 for _ in 0..n {
@@ -188,6 +196,13 @@ pub fn components_in(patch: &[u8]) -> Option<(Vec<(i32, Vec<u8>)>, Vec<i32>)> {
         dropped.push(r.read_varint().ok()?);
     }
     Some((out, dropped))
+}
+
+/// A whole-number component of a patch, such as damage or repair cost.
+pub fn number_in(patch: &[u8], component: i32) -> Option<i32> {
+    let (added, _) = components_in(patch)?;
+    let (_, data) = added.iter().find(|(id, _)| *id == component)?;
+    PacketReader::new(data).read_varint().ok()
 }
 
 /// How damaged an item is, or None when it carries no damage.

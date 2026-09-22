@@ -101,6 +101,10 @@ pub struct PlayerState {
     pub sleeping: bool,
     /// The open crafting grid: slot 0 is the result, 1-9 the grid itself.
     pub crafting: Vec<garnet_protocol::packets::play::items::ItemStack>,
+    /// The open anvil: two inputs and what they would make.
+    pub anvil: Vec<garnet_protocol::packets::play::items::ItemStack>,
+    /// The name typed into that anvil.
+    pub anvil_name: Option<String>,
     pub next_window_id: i32,
     /// Non-player entities this client has been shown.
     pub visible_entities: HashSet<i32>,
@@ -200,6 +204,8 @@ impl Player {
                 container: None,
                 sleeping: false,
                 crafting: Vec::new(),
+                anvil: Vec::new(),
+                anvil_name: None,
                 next_window_id: 0,
                 visible_entities: HashSet::new(),
             }),

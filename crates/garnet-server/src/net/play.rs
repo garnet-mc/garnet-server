@@ -399,6 +399,10 @@ pub async fn handle(server: &Arc<Server>, player: &Arc<Player>, name: &str, r: &
                 crate::containers::click(server, player, p);
             }
         }
+        "rename_item" => {
+            let p = sb::RenameItem::read(r)?;
+            crate::anvil::rename(server, player, p.name);
+        }
         "container_close" => {
             let _ = sb::ContainerClose::read(r)?;
             crate::containers::close(server, player);

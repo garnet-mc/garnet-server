@@ -7,6 +7,7 @@
 mod admin_bridge;
 mod anticheat;
 mod audit;
+mod anvil;
 mod backup;
 mod blocks;
 mod board_commands;

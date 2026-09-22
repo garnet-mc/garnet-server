@@ -36,6 +36,8 @@ pub enum Kind {
     Crafting,
     /// In the block, but ticked whether or not anyone is watching.
     Furnace,
+    /// On the player: two things to join and what they would make.
+    Anvil,
 }
 
 /// The containers we know how to open, and how big they are. Ender chests
@@ -62,6 +64,9 @@ pub fn open(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos, block: &s
     }
     if crate::furnaces::is_furnace(block) {
         return open_furnace(server, player, pos, block);
+    }
+    if block.ends_with("anvil") {
+        return crate::anvil::open(server, player, pos);
     }
     let Some((size, menu, title)) = container_size(block) else {
         return false;
@@ -201,6 +206,7 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
         Kind::Block => read_items(server, open.pos, open.size),
         Kind::Crafting => player.lock().crafting.clone(),
         Kind::Furnace => crate::furnaces::state(server, open.pos).items,
+        Kind::Anvil => player.lock().anvil.clone(),
     };
     {
         let s = player.lock();
@@ -208,6 +214,13 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
         slots.extend(s.inventory.slots[HOTBAR_START..HOTBAR_START + 9].iter().cloned());
     }
     let mut cursor = player.lock().inventory.cursor.clone();
+    // An anvil hands its result over itself, so the usual click logic
+    // never sees that slot.
+    if open.kind == Kind::Anvil && click.slot == crate::anvil::RESULT as i16 {
+        crate::anvil::take(server, player);
+        crate::anvil::refresh(server, player);
+        return;
+    }
     let taking_result = open.kind == Kind::Crafting && click.slot == 0;
     if taking_result && slots[0].is_empty() {
         crate::items::sync_inventory(player);
@@ -227,6 +240,7 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
         Kind::Block => write_items(server, open.pos, block_items),
         Kind::Crafting => player.lock().crafting = block_items.to_vec(),
         Kind::Furnace => crate::furnaces::touched(server, open.pos, block_items.to_vec()),
+        Kind::Anvil => player.lock().anvil = block_items.to_vec(),
     }
     {
         let mut s = player.lock();
@@ -237,6 +251,10 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
             s.inventory.slots[HOTBAR_START + i] = stack.clone();
         }
         s.inventory.cursor = cursor;
+    }
+    if open.kind == Kind::Anvil {
+        crate::anvil::refresh(server, player);
+        return;
     }
     send_content(server, player, block_items);
     if open.kind == Kind::Block {
@@ -381,11 +399,26 @@ pub fn close(server: &Arc<Server>, player: &Arc<Player>) {
             left.push(cursor);
         }
     }
-    if open.map(|c| c.kind) == Some(Kind::Crafting) {
-        let mut s = player.lock();
-        let grid = std::mem::take(&mut s.crafting);
-        drop(s);
-        left.extend(grid.into_iter().skip(1).filter(|stack| !stack.is_empty()));
+    match open.map(|c| c.kind) {
+        Some(Kind::Crafting) => {
+            let mut s = player.lock();
+            let grid = std::mem::take(&mut s.crafting);
+            drop(s);
+            left.extend(grid.into_iter().skip(1).filter(|stack| !stack.is_empty()));
+        }
+        Some(Kind::Anvil) => {
+            let mut s = player.lock();
+            let slots = std::mem::take(&mut s.anvil);
+            s.anvil_name = None;
+            drop(s);
+            left.extend(
+                slots
+                    .into_iter()
+                    .take(crate::anvil::RESULT)
+                    .filter(|stack| !stack.is_empty()),
+            );
+        }
+        _ => {}
     }
     if left.is_empty() {
         return;
