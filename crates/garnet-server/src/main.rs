@@ -15,6 +15,7 @@ mod client_mods;
 mod commands;
 mod config;
 mod entities;
+mod functions;
 mod inventory;
 mod items;
 mod lists;
@@ -137,6 +138,7 @@ async fn async_main(cli: Cli) -> Result<()> {
     let commands = commands::CommandRegistry::default();
     commands::register_builtins(&commands);
     vanilla_commands::register(&commands);
+    functions::register(&commands);
 
     // The mod runtime needs a handle to the server and the server owns the
     // runtime, so the host is attached to the server right after it is built.
@@ -177,6 +179,7 @@ async fn async_main(cli: Cli) -> Result<()> {
             next_entity_id: AtomicI32::new(1),
             shutdown,
             stopping: AtomicBool::new(false),
+            datapacks_present: AtomicBool::new(false),
             http: reqwest::Client::builder()
                 .user_agent(concat!("garnet/", env!("CARGO_PKG_VERSION")))
                 .build()
@@ -184,6 +187,8 @@ async fn async_main(cli: Cli) -> Result<()> {
         }
     });
     host.attach(&server);
+    functions::refresh_presence(&server);
+    functions::run_tag(&server, "minecraft:load");
 
     // Mods: load from disk, then enable once the world is open.
     {

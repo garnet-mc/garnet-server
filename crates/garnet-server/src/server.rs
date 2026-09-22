@@ -88,6 +88,8 @@ pub struct Server {
     pub next_entity_id: AtomicI32,
     pub shutdown: watch::Sender<bool>,
     pub stopping: AtomicBool,
+    /// Whether any data pack is enabled (skips the per-tick function tag otherwise).
+    pub datapacks_present: AtomicBool,
     pub http: reqwest::Client,
 }
 
@@ -417,6 +419,7 @@ impl Server {
             self.tick_players(tick);
             self.tick_light();
             crate::vanilla_commands::tick_effects(&self, tick);
+            crate::functions::tick(&self, tick);
             self.apply_mod_actions();
             self.tick_mods(tick);
 

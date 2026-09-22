@@ -82,6 +82,8 @@ pub struct WorldRules {
     /// Where new players start and respawn by default.
     pub spawn_yaw: f32,
     pub autosave: bool,
+    pub disabled_datapacks: Vec<String>,
+    pub scheduled_functions: Vec<crate::functions::ScheduledFunction>,
 }
 
 impl Default for WorldRules {
@@ -96,6 +98,8 @@ impl Default for WorldRules {
             tick: TickControl::default(),
             spawn_yaw: 0.0,
             autosave: true,
+            disabled_datapacks: Vec::new(),
+            scheduled_functions: Vec::new(),
         }
     }
 }

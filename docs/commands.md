@@ -84,10 +84,18 @@ Inventories are real: survival players pick up what blocks drop (from
 Mojang's loot tables, with tool and silk touch/fortune rules), place what they
 hold, and keep their inventory across rejoins.
 
+## Data packs
+
+Put packs in `world/datapacks/<name>/` (a folder with `pack.mcmeta`).
+`/datapack list|enable|disable`, `/function <ns:name>` (or `#ns:tag`),
+`/schedule function <name> <time> [append|replace]`, `/schedule clear`,
+`/return <value>|fail`. `#minecraft:load` runs at start and when a pack is
+enabled; `#minecraft:tick` runs every tick. Macro lines (`$`) are skipped for
+now.
+
 ## Not there yet
 
 `loot`, `recipe`, `advancement`, `summon`, `ride`, `locate`, `place`,
-`fillbiome`, `function`, `datapack`, `schedule`, `return`, `data`, `debug`,
-`jfr`, `perf` are registered so tab completion and `/help` are complete, and
+`fillbiome`, `data`, `debug`, `jfr`, `perf` are registered so tab completion and `/help` are complete, and
 each one says which system it is waiting on (entities, structures, data
 packs). They arrive with those systems.
