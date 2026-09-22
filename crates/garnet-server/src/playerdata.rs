@@ -21,6 +21,10 @@ pub struct SavedPlayer {
     pub game_mode: Option<GameMode>,
     pub health: f32,
     pub food: i32,
+    pub saturation: f32,
+    pub exhaustion: f32,
+    pub air: i32,
+    pub fire_ticks: i32,
     pub xp_level: i32,
     pub xp_total: i32,
     pub spawn_point: Option<garnet_protocol::BlockPos>,
@@ -55,6 +59,10 @@ pub fn load(server: &Server, uuid: Uuid) -> Option<SavedPlayer> {
         game_mode: root.get_i32("playerGameType").and_then(GameMode::from_id),
         health: root.get_f64("Health").unwrap_or(20.0) as f32,
         food: root.get_i32("foodLevel").unwrap_or(20),
+        saturation: root.get_f64("foodSaturationLevel").unwrap_or(5.0) as f32,
+        exhaustion: root.get_f64("foodExhaustionLevel").unwrap_or(0.0) as f32,
+        air: root.get_i32("Air").unwrap_or(crate::survival::MAX_AIR),
+        fire_ticks: root.get_i32("Fire").unwrap_or(0).max(0),
         xp_level: root.get_i32("XpLevel").unwrap_or(0),
         xp_total: root.get_i32("XpTotal").unwrap_or(0),
         spawn_point: match (root.get_i32("SpawnX"), root.get_i32("SpawnY"), root.get_i32("SpawnZ")) {
@@ -127,6 +135,10 @@ pub fn save(server: &Server, player: &Player) {
     root.put("playerGameType", state.game_mode as i32);
     root.put("Health", state.health);
     root.put("foodLevel", state.food);
+    root.put("foodSaturationLevel", state.saturation);
+    root.put("foodExhaustionLevel", state.exhaustion);
+    root.put("Air", state.air);
+    root.put("Fire", state.fire_ticks);
     root.put("Dimension", state.dimension.as_str());
     root.put("OnGround", state.on_ground);
     root.put("SelectedItemSlot", state.held_slot);

@@ -102,6 +102,33 @@ pub fn pose_packet(player: &Player, sneaking: bool) -> cb::SetEntityData {
     }
 }
 
+/// The shared entity flags byte plus the air supply, so other players see
+/// someone burning and the owner sees their bubbles run out.
+pub fn flags_packet(player: &Player, burning: bool, air: i32) -> cb::SetEntityData {
+    let (sneaking, sprinting) = {
+        let s = player.lock();
+        (s.sneaking, s.sprinting)
+    };
+    let mut flags = garnet_protocol::PacketWriter::new();
+    let mut bits = 0u8;
+    if burning {
+        bits |= 0x01;
+    }
+    if sneaking {
+        bits |= 0x02;
+    }
+    if sprinting {
+        bits |= 0x08;
+    }
+    flags.write_u8(bits);
+    let mut breath = garnet_protocol::PacketWriter::new();
+    breath.write_varint(air);
+    cb::SetEntityData {
+        entity_id: player.entity_id,
+        entries: vec![(0, 0, flags.into_inner()), (1, 1, breath.into_inner())],
+    }
+}
+
 /// Tells nearby players that `player` moved from `from` to its current
 /// position. Small moves use the delta packet, big ones a full sync.
 pub fn broadcast_movement(server: &Server, player: &Player, from: (f64, f64, f64), rotated: bool) {

@@ -60,6 +60,22 @@ pub struct PlayerState {
     pub sprinting: bool,
     pub health: f32,
     pub food: i32,
+    /// The hidden bar behind the food one: it empties first.
+    pub saturation: f32,
+    /// Work done since the last point of food was spent.
+    pub exhaustion: f32,
+    /// Breath left, in ticks.
+    pub air: i32,
+    pub fire_ticks: i32,
+    /// How far this player has fallen since last touching the ground.
+    pub fall_distance: f32,
+    /// Ticks of the last hit taken and the last swing thrown.
+    pub last_hurt_tick: u64,
+    pub last_attack_tick: u64,
+    /// When the current meal started, if there is one.
+    pub eating_since: Option<u64>,
+    /// Whether nearby clients have been told this player is on fire.
+    pub shown_burning: bool,
     pub last_activity: Instant,
     /// The client sent `player_loaded`: it is rendering the world.
     pub loaded: bool,
@@ -150,6 +166,15 @@ impl Player {
                 sprinting: false,
                 health: 20.0,
                 food: 20,
+                saturation: 5.0,
+                exhaustion: 0.0,
+                air: crate::survival::MAX_AIR,
+                fire_ticks: 0,
+                fall_distance: 0.0,
+                last_hurt_tick: 0,
+                last_attack_tick: 0,
+                eating_since: None,
+                shown_burning: false,
                 last_activity: now,
                 loaded: false,
                 unacked_batches: 0,

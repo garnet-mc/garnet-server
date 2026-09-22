@@ -29,6 +29,7 @@ mod playerdata;
 mod rcon;
 mod rules;
 mod server;
+mod survival;
 mod vanilla_commands;
 mod world_entities;
 

@@ -581,6 +581,23 @@ impl ClientboundPacket for GameRuleValues {
     }
 }
 
+/// Shoves an entity: knockback, and anything else that throws a player.
+pub struct SetEntityMotion {
+    pub entity_id: i32,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
+
+impl ClientboundPacket for SetEntityMotion {
+    const NAME: &'static str = "set_entity_motion";
+    const STATE: State = State::Play;
+    fn write(&self, w: &mut PacketWriter) {
+        w.write_varint(self.entity_id);
+        super::write_lp_vec3(w, self.x, self.y, self.z);
+    }
+}
+
 /// Who rides what. An empty list means everyone got off.
 pub struct SetPassengers {
     pub vehicle: i32,

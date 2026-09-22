@@ -81,6 +81,8 @@ pub struct ServerSection {
     pub whitelist: bool,
     /// Blocks around spawn only ops can edit; 0 disables.
     pub spawn_protection: i32,
+    /// Whether players can hurt each other.
+    pub pvp: bool,
     /// Message shown to players kicked for being AFK too long (0 = never).
     pub afk_kick_minutes: u64,
     /// Show a code of conduct players must accept before joining (empty = off).
@@ -209,6 +211,7 @@ impl Default for ServerSection {
             velocity_secret: String::new(),
             whitelist: false,
             spawn_protection: 16,
+            pvp: true,
             afk_kick_minutes: 0,
             code_of_conduct: String::new(),
         }
@@ -379,6 +382,8 @@ proxy = "{proxy}"                    # none | bungeecord | velocity
 velocity_secret = ""
 whitelist = {whitelist}
 spawn_protection = {spawn_protection}
+# Whether players can hurt each other.
+pvp = {pvp}
 afk_kick_minutes = {afk_kick_minutes}
 code_of_conduct = ""
 
@@ -460,6 +465,7 @@ optional = []
         proxy = d.server.proxy,
         whitelist = d.server.whitelist,
         spawn_protection = d.server.spawn_protection,
+        pvp = d.server.pvp,
         afk_kick_minutes = d.server.afk_kick_minutes,
         wname = d.world.name,
         seed = d.world.seed,

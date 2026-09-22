@@ -145,6 +145,10 @@ Join with the Garnet launcher and they install automatically:
         state.pitch = saved.pitch;
         state.health = saved.health;
         state.food = saved.food;
+        state.saturation = saved.saturation;
+        state.exhaustion = saved.exhaustion;
+        state.air = saved.air;
+        state.fire_ticks = saved.fire_ticks;
         state.xp_level = saved.xp_level;
         state.xp_total = saved.xp_total;
         state.spawn_point = saved.spawn_point;

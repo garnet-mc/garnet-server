@@ -367,6 +367,7 @@ pub async fn handle(server: &Arc<Server>, player: &Arc<Player>, name: &str, r: &
         }
         "use_item" => {
             let _ = sb::UseItem::read(r)?;
+            crate::survival::start_using(server, player, server.current_tick());
         }
         "punch" => {
             let chunk = player.lock().chunk();
@@ -431,9 +432,14 @@ pub async fn handle(server: &Arc<Server>, player: &Arc<Player>, name: &str, r: &
             let p = sb::ClientCommand::read(r)?;
             if p.action == 0 {
                 respawn(server, player);
+                crate::survival::respawned(server, player);
             }
         }
-        "interact" | "attack" | "chat_ack" | "chat_session_update" | "client_tick_end" | "pong"
+        "attack" => {
+            let p = sb::Attack::read(r)?;
+            crate::survival::attack(server, player, p.entity_id, server.current_tick());
+        }
+        "interact" | "chat_ack" | "chat_session_update" | "client_tick_end" | "pong"
         | "configuration_acknowledged" | "cookie_response" => {}
         _ => {}
     }
@@ -591,6 +597,7 @@ fn handle_move(server: &Arc<Server>, player: &Arc<Player>, pos: Option<(f64, f64
         server.move_player_chunk(player.uuid, from_chunk, to_chunk);
     }
     if pos.is_some() || rot.is_some() {
+        crate::survival::moved(server, player, from, to, on_ground);
         entities::broadcast_movement(server, player, from, rot.is_some());
     }
 }
@@ -661,6 +668,10 @@ fn handle_dig(server: &Arc<Server>, player: &Arc<Player>, action: sb::PlayerActi
             crate::items::throw_held(server, player, action.status == DropItemStack);
             return;
         }
+        ReleaseUseItem => {
+            crate::survival::stop_using(player);
+            return;
+        }
         _ => {}
     }
     let breaks = match (action.status, game_mode) {
@@ -713,6 +724,7 @@ fn handle_dig(server: &Arc<Server>, player: &Arc<Player>, action: sb::PlayerActi
         let air = server.data.blocks.default_state("air").unwrap_or(0) as u32;
         server.set_block(action.position, air);
         crate::items::collect_drops(server, player, current, action.position);
+        crate::survival::mined(player);
     }
     done();
 }

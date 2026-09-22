@@ -90,6 +90,21 @@ impl Inventory {
 
     /// Removes up to `max` items (all when `max` is negative) matching the
     /// filter (every item when `None`); returns how many went.
+    /// Takes everything out, for a player who just died.
+    pub fn take_all(&mut self) -> Vec<ItemStack> {
+        let mut out = Vec::new();
+        for slot in self.slots.iter_mut() {
+            if !slot.is_empty() {
+                out.push(std::mem::replace(slot, ItemStack::EMPTY));
+            }
+        }
+        if !self.cursor.is_empty() {
+            out.push(std::mem::replace(&mut self.cursor, ItemStack::EMPTY));
+        }
+        self.state_id += 1;
+        out
+    }
+
     pub fn clear(&mut self, item: Option<i32>, max: i32) -> i32 {
         let mut removed = 0;
         for slot in self.slots.iter_mut().chain(std::iter::once(&mut self.cursor)) {

@@ -424,6 +424,7 @@ impl Server {
             crate::vanilla_commands::tick_effects(&self, tick);
             crate::functions::tick(&self, tick);
             crate::world_entities::tick(&self);
+            crate::survival::tick(&self, tick);
             self.apply_mod_actions();
             self.tick_mods(tick);
 

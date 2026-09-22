@@ -22,6 +22,7 @@ copy. A file that does not parse stops the server with the reason printed.
 | `velocity_secret` | | Required with `proxy = "velocity"` |
 | `whitelist` | false | |
 | `spawn_protection` | 16 | Radius only ops can edit; 0 disables |
+| `pvp` | true | Whether players can hurt each other |
 | `afk_kick_minutes` | 0 | 0 never kicks |
 | `code_of_conduct` | | Text players must accept before joining |
 
