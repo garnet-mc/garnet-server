@@ -238,7 +238,7 @@ pub fn register_builtins(registry: &CommandRegistry) {
     add("op", "Makes a player an operator", "/op <player>", cmd_op);
     add("deop", "Removes operator status", "/deop <player>", cmd_deop);
     add("gamemode", "Changes game mode", "/gamemode <mode> [player]", cmd_gamemode);
-    add("tp", "Teleports", "/tp <player> | /tp <x> <y> <z> | /tp <player> <target>", cmd_tp);
+    add("tp", "Teleports", "/tp <player> | /tp <x> <y> <z> | /tp <player> <target> | /tp <player> <x> <y> <z> [<yaw> <pitch>]", cmd_tp);
     add("time", "Sets the time", "/time set <day|night|noon|midnight|ticks>", cmd_time);
     add("whitelist", "Manages the whitelist", "/whitelist <add|remove|list|on|off> [player]", cmd_whitelist);
     add("save-all", "Saves the world", "/save-all", cmd_save);
@@ -470,8 +470,9 @@ pub fn teleport(player: &Arc<Player>, x: f64, y: f64, z: f64, yaw: f32, pitch: f
 }
 
 fn cmd_tp(server: &Arc<Server>, sender: &CommandSender, args: &[String]) -> Result<(), String> {
-    let usage = "Usage: /tp <player> | /tp <x> <y> <z> | /tp <player> <target> | /tp <player> <x> <y> <z>";
+    let usage = "Usage: /tp <player> | /tp <x> <y> <z> | /tp <player> <target> | /tp <player> <x> <y> <z> [<yaw> <pitch>]";
     let parse = |s: &str| s.parse::<f64>().map_err(|_| usage.to_owned());
+    let mut facing = None;
     let (who, dest) = match args.len() {
         1 => {
             let me = sender.player().cloned().ok_or(usage)?;
@@ -493,12 +494,19 @@ fn cmd_tp(server: &Arc<Server>, sender: &CommandSender, args: &[String]) -> Resu
             find_player(server, &args[0])?,
             (parse(&args[1])?, parse(&args[2])?, parse(&args[3])?),
         ),
+        6 => {
+            facing = Some((parse(&args[4])? as f32, parse(&args[5])? as f32));
+            (
+                find_player(server, &args[0])?,
+                (parse(&args[1])?, parse(&args[2])?, parse(&args[3])?),
+            )
+        }
         _ => return Err(usage.into()),
     };
-    let (yaw, pitch) = {
+    let (yaw, pitch) = facing.unwrap_or_else(|| {
         let s = who.lock();
         (s.yaw, s.pitch)
-    };
+    });
     teleport(&who, dest.0, dest.1, dest.2, yaw, pitch);
     sender.reply(Text::new(format!("Teleported {} to {:.1}, {:.1}, {:.1}.", who.name(), dest.0, dest.1, dest.2)));
     Ok(())
