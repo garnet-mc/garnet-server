@@ -1,0 +1,42 @@
+[package]
+name = "garnet-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+default-run = "garnet"
+
+[[bin]]
+name = "garnet"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+bytes = "1.12.1"
+chrono = { version = "0.4.45", features = ["serde"] }
+clap = { version = "4.6.7", features = ["derive"] }
+md-5 = "0.11.0"
+num-bigint = "0.5.1"
+garnet-admin.workspace = true
+garnet-api.workspace = true
+garnet-data.workspace = true
+garnet-mods.workspace = true
+garnet-protocol.workspace = true
+garnet-voice.workspace = true
+garnet-world.workspace = true
+rand = "0.10.3"
+rand_core = { version = "0.6", features = ["getrandom"] }
+reqwest = { version = "0.13.5", features = ["json"] }
+rsa = "0.9.10"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha1 = "0.11.0"
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["full"] }
+toml = "1.1.6"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["chrono", "env-filter"] }
+uuid = { version = "1.26.1", features = ["v3", "v4", "serde"] }
+zip = "8.6.0"
+hmac = "0.13.0"
+sha2 = "0.11.0"
+flate2 = "1.1.10"

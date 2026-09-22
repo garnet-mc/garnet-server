@@ -1,0 +1,579 @@
+//! The server: shared state plus the 20 Hz tick loop.
+//!
+//! Concurrency model, chosen so thousands of players stay comfortable:
+//! - every connection runs in its own task and handles its own packets;
+//! - there is no global lock, only short-lived locks per subsystem
+//!   (players map, world, watchers, mods) that are never held across awaits;
+//! - broadcasts are encoded once and the bytes shared;
+//! - a player only receives packets about chunks they watch.
+
+use crate::anticheat::AntiCheat;
+use crate::audit::Audit;
+use crate::commands::CommandRegistry;
+use crate::config::GarnetConfig;
+use crate::lists::Lists;
+use crate::logging::LogSink;
+use crate::player::Player;
+use anyhow::Result;
+use bytes::Bytes;
+use garnet_admin::Panel;
+use garnet_api::{Action, Permissions};
+use garnet_data::GameData;
+use garnet_mods::ModRuntime;
+use garnet_protocol::packets::play::clientbound as cb;
+use garnet_protocol::packets::play::GameMode;
+use garnet_protocol::{ChunkPos, ClientboundPacket, Text};
+use garnet_voice::VoiceServer;
+use garnet_world::World;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
+use tokio::sync::watch;
+use uuid::Uuid;
+
+/// RSA key pair used for the login encryption handshake.
+pub struct EncryptionKeys {
+    pub private: rsa::RsaPrivateKey,
+    /// DER-encoded SubjectPublicKeyInfo, what the client expects.
+    pub public_der: Vec<u8>,
+}
+
+/// A timer a mod asked for.
+pub struct ScheduledTask {
+    pub mod_id: String,
+    pub id: String,
+    pub due_tick: u64,
+    pub repeat_every: Option<u64>,
+}
+
+pub struct Server {
+    pub config: RwLock<GarnetConfig>,
+    pub config_path: PathBuf,
+    pub root: PathBuf,
+    pub data: Arc<GameData>,
+    pub world: Mutex<World>,
+    pub players: RwLock<HashMap<Uuid, Arc<Player>>>,
+    /// Which players currently have each chunk loaded.
+    pub chunk_watchers: Mutex<HashMap<ChunkPos, HashSet<Uuid>>>,
+    /// Which chunk each player stands in, for finding neighbours cheaply.
+    pub players_by_chunk: Mutex<HashMap<ChunkPos, HashSet<Uuid>>>,
+    /// Encoded chunk packets, shared between every player that needs them.
+    pub chunk_cache: Mutex<HashMap<ChunkPos, Bytes>>,
+    /// Chunks currently being generated on the blocking pool.
+    pub generating: Mutex<HashSet<ChunkPos>>,
+    pub lists: Lists,
+    pub permissions: RwLock<Permissions>,
+    pub audit: Audit,
+    pub anticheat: AntiCheat,
+    pub mods: Mutex<ModRuntime>,
+    /// Actions mods asked for; applied on the next tick, outside the mod lock.
+    pub mod_actions: Mutex<Vec<(String, Action)>>,
+    pub scheduled: Mutex<Vec<ScheduledTask>>,
+    pub commands: CommandRegistry,
+    pub voice: Option<VoiceServer>,
+    pub panel: Mutex<Option<Panel>>,
+    pub logs: LogSink,
+    pub keys: EncryptionKeys,
+    pub started: Instant,
+    pub tick: AtomicU64,
+    pub tick_times: Mutex<VecDeque<f32>>,
+    pub next_entity_id: AtomicI32,
+    pub shutdown: watch::Sender<bool>,
+    pub stopping: AtomicBool,
+    pub http: reqwest::Client,
+}
+
+impl Server {
+    pub fn config(&self) -> std::sync::RwLockReadGuard<'_, GarnetConfig> {
+        self.config.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn world(&self) -> std::sync::MutexGuard<'_, World> {
+        self.world.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn current_tick(&self) -> u64 {
+        self.tick.load(Ordering::Relaxed)
+    }
+
+    pub fn allocate_entity_id(&self) -> i32 {
+        self.next_entity_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    // ---- players ----
+
+    pub fn player(&self, uuid: Uuid) -> Option<Arc<Player>> {
+        self.players.read().unwrap_or_else(|e| e.into_inner()).get(&uuid).cloned()
+    }
+
+    pub fn player_by_name(&self, name: &str) -> Option<Arc<Player>> {
+        self.players
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .find(|p| p.name().eq_ignore_ascii_case(name))
+            .cloned()
+    }
+
+    pub fn online_players(&self) -> Vec<Arc<Player>> {
+        self.players.read().unwrap_or_else(|e| e.into_inner()).values().cloned().collect()
+    }
+
+    pub fn online_count(&self) -> usize {
+        self.players.read().unwrap_or_else(|e| e.into_inner()).len()
+    }
+
+    pub fn add_player(&self, player: Arc<Player>) {
+        let chunk = player.lock().chunk();
+        self.players.write().unwrap_or_else(|e| e.into_inner()).insert(player.uuid, Arc::clone(&player));
+        self.players_by_chunk
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(chunk)
+            .or_default()
+            .insert(player.uuid);
+    }
+
+    pub fn remove_player(&self, uuid: Uuid) -> Option<Arc<Player>> {
+        let player = self.players.write().unwrap_or_else(|e| e.into_inner()).remove(&uuid)?;
+        let (chunk, loaded) = {
+            let state = player.lock();
+            (state.chunk(), state.loaded_chunks.iter().copied().collect::<Vec<_>>())
+        };
+        let mut by_chunk = self.players_by_chunk.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(set) = by_chunk.get_mut(&chunk) {
+            set.remove(&uuid);
+            if set.is_empty() {
+                by_chunk.remove(&chunk);
+            }
+        }
+        drop(by_chunk);
+        let mut watchers = self.chunk_watchers.lock().unwrap_or_else(|e| e.into_inner());
+        for pos in loaded {
+            if let Some(set) = watchers.get_mut(&pos) {
+                set.remove(&uuid);
+                if set.is_empty() {
+                    watchers.remove(&pos);
+                }
+            }
+        }
+        Some(player)
+    }
+
+    /// Call when a player crosses into another chunk.
+    pub fn move_player_chunk(&self, uuid: Uuid, from: ChunkPos, to: ChunkPos) {
+        let mut by_chunk = self.players_by_chunk.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(set) = by_chunk.get_mut(&from) {
+            set.remove(&uuid);
+            if set.is_empty() {
+                by_chunk.remove(&from);
+            }
+        }
+        by_chunk.entry(to).or_default().insert(uuid);
+    }
+
+    // ---- sending ----
+
+    pub fn encode<P: ClientboundPacket>(&self, packet: &P) -> Option<Bytes> {
+        match self.data.packet_ids.encode(packet) {
+            Ok(b) => Some(Bytes::from(b)),
+            Err(err) => {
+                tracing::error!("cannot encode {}: {err}", P::NAME);
+                None
+            }
+        }
+    }
+
+    /// Sends to every online player.
+    pub fn broadcast<P: ClientboundPacket>(&self, packet: &P) {
+        let Some(bytes) = self.encode(packet) else { return };
+        for player in self.online_players() {
+            player.send_raw(bytes.clone());
+        }
+    }
+
+    pub fn broadcast_except<P: ClientboundPacket>(&self, packet: &P, except: Uuid) {
+        let Some(bytes) = self.encode(packet) else { return };
+        for player in self.online_players() {
+            if player.uuid != except {
+                player.send_raw(bytes.clone());
+            }
+        }
+    }
+
+    /// Sends to everyone who has `chunk` loaded, except `except`.
+    pub fn broadcast_near<P: ClientboundPacket>(&self, chunk: ChunkPos, packet: &P, except: Option<Uuid>) {
+        let Some(bytes) = self.encode(packet) else { return };
+        let targets: Vec<Uuid> = self
+            .chunk_watchers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&chunk)
+            .map(|s| s.iter().copied().collect())
+            .unwrap_or_default();
+        if targets.is_empty() {
+            return;
+        }
+        let players = self.players.read().unwrap_or_else(|e| e.into_inner());
+        for uuid in targets {
+            if Some(uuid) == except {
+                continue;
+            }
+            if let Some(p) = players.get(&uuid) {
+                p.send_raw(bytes.clone());
+            }
+        }
+    }
+
+    pub fn broadcast_chat(&self, text: Text) {
+        tracing::info!(target: "chat", "{}", text.to_plain());
+        self.broadcast(&cb::SystemChat {
+            content: text,
+            overlay: false,
+        });
+    }
+
+    // ---- world ----
+
+    /// Encoded chunk packet, from the cache or freshly encoded. `None` if the
+    /// chunk is not loaded (the tick loop then arranges generation).
+    pub fn chunk_packet(&self, pos: ChunkPos) -> Option<Bytes> {
+        if let Some(bytes) = self.chunk_cache.lock().unwrap_or_else(|e| e.into_inner()).get(&pos) {
+            return Some(bytes.clone());
+        }
+        let mut world = self.world();
+        if !world.is_loaded(pos) {
+            return None;
+        }
+        let packet = world.chunk_packet(pos).ok()?;
+        drop(world);
+        let bytes = self.encode(&packet)?;
+        self.chunk_cache.lock().unwrap_or_else(|e| e.into_inner()).insert(pos, bytes.clone());
+        Some(bytes)
+    }
+
+    pub fn invalidate_chunk(&self, pos: ChunkPos) {
+        self.chunk_cache.lock().unwrap_or_else(|e| e.into_inner()).remove(&pos);
+    }
+
+    /// Makes sure a chunk is loaded or on its way. Disk reads and terrain
+    /// generation both run on worker threads; the chunk appears a tick later.
+    pub fn request_chunk(self: &Arc<Self>, pos: ChunkPos) {
+        {
+            let mut world = self.world();
+            if world.is_loaded(pos) {
+                world.touch(pos);
+                return;
+            }
+        }
+        {
+            let mut generating = self.generating.lock().unwrap_or_else(|e| e.into_inner());
+            if !generating.insert(pos) {
+                return;
+            }
+        }
+        let server = Arc::clone(self);
+        let (regions, generator, (data, range)) = {
+            let world = self.world();
+            (world.regions(), world.generator(), world.anvil_context())
+        };
+        tokio::task::spawn_blocking(move || {
+            let from_disk = match regions.read(pos) {
+                Ok(Some(nbt)) => {
+                    let ctx = garnet_world::anvil::AnvilContext {
+                        blocks: &data.blocks,
+                        dynamic: &data.dynamic,
+                        data_version: data.data_version,
+                    };
+                    match garnet_world::anvil::chunk_from_nbt(&nbt, pos, range, &ctx) {
+                        Ok(chunk) => Some(chunk),
+                        Err(err) => {
+                            tracing::error!("chunk {:?} is corrupt ({err}); regenerating it", pos);
+                            None
+                        }
+                    }
+                }
+                Ok(None) => None,
+                Err(err) => {
+                    tracing::error!("reading chunk {:?}: {err}", pos);
+                    None
+                }
+            };
+            match from_disk {
+                Some(chunk) => server.world().insert_loaded_chunk(chunk),
+                None => server.world().insert_chunk(generator.generate(pos, range)),
+            }
+            server.generating.lock().unwrap_or_else(|e| e.into_inner()).remove(&pos);
+        });
+    }
+
+    pub fn set_block(&self, pos: garnet_protocol::BlockPos, state: u32) -> bool {
+        let changed = self.world().set_block(pos, state).unwrap_or(false);
+        if changed {
+            self.invalidate_chunk(pos.chunk());
+            self.broadcast_near(
+                pos.chunk(),
+                &cb::BlockUpdate {
+                    position: pos,
+                    state_id: state as i32,
+                },
+                None,
+            );
+        }
+        changed
+    }
+
+    pub fn default_game_mode(&self) -> GameMode {
+        GameMode::parse(&self.config().world.gamemode).unwrap_or(GameMode::Survival)
+    }
+
+    pub fn is_op(&self, uuid: Uuid) -> bool {
+        self.lists.is_op(uuid)
+    }
+
+    pub fn has_permission(&self, uuid: Uuid, permission: &str) -> bool {
+        let perms = self.permissions.read().unwrap_or_else(|e| e.into_inner());
+        perms.check(&uuid.to_string(), self.is_op(uuid), permission)
+    }
+
+    pub fn tps(&self) -> (f32, f32) {
+        let times = self.tick_times.lock().unwrap_or_else(|e| e.into_inner());
+        if times.is_empty() {
+            return (20.0, 0.0);
+        }
+        let avg_ms = times.iter().sum::<f32>() / times.len() as f32;
+        let tps = (1000.0 / avg_ms.max(50.0)).min(20.0);
+        (tps, avg_ms)
+    }
+
+    pub fn request_stop(&self) {
+        if !self.stopping.swap(true, Ordering::SeqCst) {
+            let _ = self.shutdown.send(true);
+        }
+    }
+
+    // ---- the tick loop ----
+
+    pub async fn run_ticks(self: Arc<Self>) {
+        let mut interval = tokio::time::interval(Duration::from_millis(50));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut shutdown = self.shutdown.subscribe();
+        let mut last_autosave = Instant::now();
+        let mut last_unload = Instant::now();
+        let mut last_backup = Instant::now();
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {}
+                _ = shutdown.changed() => break,
+            }
+            let started = Instant::now();
+            let tick = self.tick.fetch_add(1, Ordering::Relaxed) + 1;
+
+            self.tick_time(tick);
+            self.tick_players(tick);
+            self.apply_mod_actions();
+            self.tick_mods(tick);
+
+            let config = self.config();
+            let autosave = Duration::from_secs(config.world.autosave_minutes.max(1) * 60);
+            let unload_after = Duration::from_secs(config.world.chunk_unload_seconds.max(5));
+            let backups_enabled = config.backups.enabled;
+            let backup_every = Duration::from_secs(config.backups.interval_hours.max(1) * 3600);
+            drop(config);
+
+            if last_autosave.elapsed() >= autosave {
+                last_autosave = Instant::now();
+                self.save_everything("autosave");
+            }
+            if last_unload.elapsed() >= Duration::from_secs(15) {
+                last_unload = Instant::now();
+                self.unload_unwatched_chunks(unload_after);
+            }
+            if backups_enabled && last_backup.elapsed() >= backup_every {
+                last_backup = Instant::now();
+                let server = Arc::clone(&self);
+                tokio::task::spawn_blocking(move || {
+                    if let Err(err) = crate::backup::create(&server, "scheduled") {
+                        tracing::error!("scheduled backup failed: {err:#}");
+                    }
+                });
+            }
+
+            let elapsed = started.elapsed().as_secs_f32() * 1000.0;
+            let mut times = self.tick_times.lock().unwrap_or_else(|e| e.into_inner());
+            if times.len() >= 100 {
+                times.pop_front();
+            }
+            times.push_back(elapsed);
+            if elapsed > 100.0 {
+                tracing::warn!("tick {tick} took {elapsed:.0} ms");
+            }
+        }
+    }
+
+    fn tick_time(&self, tick: u64) {
+        let daylight = self.config().world.daylight_cycle;
+        let (age, time_of_day) = {
+            let mut world = self.world();
+            world.settings.age += 1;
+            if daylight {
+                world.settings.time_of_day = (world.settings.time_of_day + 1) % 24000;
+            }
+            (world.settings.age, world.settings.time_of_day)
+        };
+        if tick % 20 == 0 {
+            self.broadcast(&cb::SetTime {
+                world_age: age,
+                time_of_day,
+                advancing: daylight,
+            });
+        }
+    }
+
+    fn tick_players(self: &Arc<Self>, tick: u64) {
+        let now = Instant::now();
+        let (server_view, afk_minutes) = {
+            let c = self.config();
+            (c.server.view_distance, c.server.afk_kick_minutes)
+        };
+        for player in self.online_players() {
+            // Keep-alives: one every ten seconds, thirty seconds to answer.
+            {
+                let mut state = player.lock();
+                if state.awaiting_keepalive && now.duration_since(state.keepalive_sent) > Duration::from_secs(30) {
+                    drop(state);
+                    player.disconnect(Text::translate("disconnect.timeout", vec![]));
+                    continue;
+                }
+                if !state.awaiting_keepalive && now.duration_since(state.keepalive_sent) > Duration::from_secs(10) {
+                    state.keepalive_sent = now;
+                    state.keepalive_id = now.elapsed().as_millis() as i64 ^ (tick as i64);
+                    state.awaiting_keepalive = true;
+                    let id = state.keepalive_id;
+                    drop(state);
+                    player.send(&cb::KeepAlive { id });
+                }
+            }
+            if afk_minutes > 0 {
+                let idle = now.duration_since(player.lock().last_activity);
+                if idle > Duration::from_secs(afk_minutes * 60) {
+                    player.disconnect(Text::new("You were kicked for being idle."));
+                    continue;
+                }
+            }
+            crate::chunks::stream_chunks(self, &player, server_view);
+            if tick % 10 == 0 {
+                crate::entities::update_visibility(self, &player);
+            }
+            if let Some(voice) = &self.voice {
+                if tick % 4 == 0 {
+                    let state = player.lock();
+                    voice.update_position(
+                        player.uuid,
+                        garnet_voice::Position {
+                            dimension: 0,
+                            x: state.x as f32,
+                            y: state.y as f32,
+                            z: state.z as f32,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    fn tick_mods(self: &Arc<Self>, tick: u64) {
+        // Timers first, so a mod's timer fires before it sees the tick.
+        let due: Vec<(String, String)> = {
+            let mut scheduled = self.scheduled.lock().unwrap_or_else(|e| e.into_inner());
+            let mut fired = Vec::new();
+            scheduled.retain_mut(|task| {
+                if task.due_tick > tick {
+                    return true;
+                }
+                fired.push((task.mod_id.clone(), task.id.clone()));
+                match task.repeat_every {
+                    Some(every) => {
+                        task.due_tick = tick + every;
+                        true
+                    }
+                    None => false,
+                }
+            });
+            fired
+        };
+        let mut mods = self.mods.lock().unwrap_or_else(|e| e.into_inner());
+        for (_, id) in due {
+            mods.dispatch(&garnet_api::Event::TimerFired { id });
+        }
+        mods.dispatch(&garnet_api::Event::Tick { tick });
+    }
+
+    /// Runs the actions mods queued since last tick.
+    fn apply_mod_actions(self: &Arc<Self>) {
+        let queued: Vec<(String, Action)> = std::mem::take(&mut *self.mod_actions.lock().unwrap_or_else(|e| e.into_inner()));
+        for (mod_id, action) in queued {
+            crate::mod_host::apply_action(self, &mod_id, action);
+        }
+    }
+
+    pub fn save_everything(&self, why: &str) {
+        let started = Instant::now();
+        let chunks = match self.world().save() {
+            Ok(n) => n,
+            Err(err) => {
+                tracing::error!("world save failed: {err:#}");
+                0
+            }
+        };
+        for player in self.online_players() {
+            crate::playerdata::save(self, &player);
+        }
+        tracing::info!("{why}: saved {chunks} chunks in {} ms", started.elapsed().as_millis());
+    }
+
+    fn unload_unwatched_chunks(&self, idle: Duration) {
+        let keep: HashSet<ChunkPos> = self
+            .chunk_watchers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .copied()
+            .collect();
+        let unloaded = match self.world().unload_unused(&keep, idle) {
+            Ok(n) => n,
+            Err(err) => {
+                tracing::error!("unloading chunks: {err:#}");
+                return;
+            }
+        };
+        if unloaded > 0 {
+            let mut cache = self.chunk_cache.lock().unwrap_or_else(|e| e.into_inner());
+            cache.retain(|pos, _| keep.contains(pos));
+            tracing::debug!("unloaded {unloaded} idle chunks");
+        }
+    }
+
+    pub fn memory_mb() -> u64 {
+        // Resident set size where the platform makes it cheap to read.
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(text) = std::fs::read_to_string("/proc/self/statm") {
+                if let Some(pages) = text.split_whitespace().nth(1).and_then(|p| p.parse::<u64>().ok()) {
+                    return pages * 4096 / 1024 / 1024;
+                }
+            }
+        }
+        0
+    }
+}
+
+pub fn generate_keys() -> Result<EncryptionKeys> {
+    use rsa::pkcs8::EncodePublicKey;
+    let mut rng = rand_core::OsRng;
+    let private = rsa::RsaPrivateKey::new(&mut rng, 1024)?;
+    let public_der = private.to_public_key().to_public_key_der()?.as_bytes().to_vec();
+    Ok(EncryptionKeys { private, public_der })
+}

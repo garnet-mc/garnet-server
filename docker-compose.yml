@@ -1,0 +1,14 @@
+services:
+  garnet:
+    image: ghcr.io/garnet-mc/garnet-server:latest
+    build: .
+    container_name: garnet
+    restart: unless-stopped
+    ports:
+      - "25565:25565/tcp"   # game
+      - "25565:25565/udp"   # voice chat
+      - "8080:8080/tcp"     # admin panel
+    volumes:
+      - ./data:/data        # config, world, mods, backups, downloaded game data
+    stdin_open: true
+    tty: true

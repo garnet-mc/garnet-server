@@ -1,0 +1,11 @@
+[package]
+name = "garnet-sdk"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Write Garnet server mods in Rust"
+
+[dependencies]
+garnet-api = { path = "../../crates/garnet-api" }
+serde_json = "1"
+uuid = "1"

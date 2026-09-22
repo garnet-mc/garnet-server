@@ -1,0 +1,5 @@
+id = "hello"
+name = "Hello"
+version = "0.1.0"
+authors = ["Garnet"]
+description = "Greets players, adds /hello and blocks a cursed word"

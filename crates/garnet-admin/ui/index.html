@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Garnet</title>
+<link rel="icon" href="/logo.png">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar" hidden>
+    <div class="brand">
+      <img src="/logo.png" alt="">
+      <div>
+        <div class="brand-name">Garnet</div>
+        <div class="brand-sub" id="server-name">server</div>
+      </div>
+    </div>
+    <nav>
+      <a href="#dashboard" data-page="dashboard">Dashboard</a>
+      <a href="#players" data-page="players">Players</a>
+      <a href="#console" data-page="console">Console</a>
+      <a href="#mods" data-page="mods">Mods</a>
+      <a href="#bans" data-page="bans">Bans &amp; whitelist</a>
+      <a href="#anticheat" data-page="anticheat" data-role="moderator">Anti-cheat</a>
+      <a href="#audit" data-page="audit" data-role="moderator">Audit log</a>
+      <a href="#config" data-page="config" data-role="admin">Config</a>
+      <a href="#backups" data-page="backups" data-role="admin">Backups</a>
+      <a href="#users" data-page="users" data-role="owner">Panel users</a>
+    </nav>
+    <div class="sidebar-foot">
+      <span id="me"></span>
+      <button class="link" id="logout">Log out</button>
+    </div>
+  </aside>
+  <main id="main"></main>
+</div>
+<div id="toast" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>

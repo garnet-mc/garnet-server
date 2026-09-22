@@ -1,0 +1,15 @@
+[package]
+name = "garnet-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+aes = "0.9.3"
+bytes = "1.12.1"
+cfb8 = "0.9.1"
+flate2 = "1.1.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2.0.20"
+uuid = { version = "1", features = ["v3", "v4", "serde"] }
