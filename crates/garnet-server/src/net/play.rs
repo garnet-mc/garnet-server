@@ -392,10 +392,15 @@ pub async fn handle(server: &Arc<Server>, player: &Arc<Player>, name: &str, r: &
         }
         "container_click" => {
             let p = sb::ContainerClick::read(r)?;
-            crate::items::handle_click(server, player, &p);
+            if p.container_id == 0 {
+                crate::items::handle_click(server, player, &p);
+            } else {
+                crate::containers::click(server, player, p);
+            }
         }
         "container_close" => {
             let _ = sb::ContainerClose::read(r)?;
+            crate::containers::close(player);
             crate::items::sync_inventory(player);
         }
         "player_abilities" => {
@@ -721,6 +726,13 @@ fn handle_dig(server: &Arc<Server>, player: &Arc<Player>, action: sb::PlayerActi
     if verdict.cancel {
         restore_block(server, player, action.position);
     } else {
+        let broken = server
+            .data
+            .blocks
+            .block_of_state(current as i32)
+            .map(|b| b.name.clone())
+            .unwrap_or_default();
+        crate::containers::spill(server, action.position, &broken);
         let air = server.data.blocks.default_state("air").unwrap_or(0) as u32;
         server.set_block(action.position, air);
         crate::items::collect_drops(server, player, current, action.position);
@@ -762,6 +774,21 @@ fn handle_use_item_on(server: &Arc<Server>, player: &Arc<Player>, use_on: sb::Us
     let eyes = player.lock().eye_position();
     let creative = player.lock().game_mode == GameMode::Creative;
     let too_far = server.anticheat.check_reach(eyes, (target.x, target.y, target.z), creative).is_some();
+    // A container opens unless the player is crouching to build against it.
+    if !too_far && !player.lock().sneaking {
+        let block = server
+            .data
+            .blocks
+            .block_of_state(clicked as i32)
+            .map(|b| b.name.clone())
+            .unwrap_or_default();
+        if crate::containers::open(server, player, target, &block) {
+            player.send(&cb::AcknowledgeBlockChange {
+                sequence: use_on.sequence,
+            });
+            return;
+        }
+    }
     let placed = !too_far
         && !protected(server, player, target)
         && crate::items::place_held(server, player, target, use_on.face, (use_on.cursor_x, use_on.cursor_y, use_on.cursor_z), use_on.hand);

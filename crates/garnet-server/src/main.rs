@@ -13,6 +13,7 @@ mod boards;
 mod chunks;
 mod client_mods;
 mod commands;
+mod containers;
 mod config;
 mod entities;
 mod entity_commands;

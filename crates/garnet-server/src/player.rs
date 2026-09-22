@@ -93,6 +93,9 @@ pub struct PlayerState {
     /// Attribute base values changed with /attribute, by full name.
     pub attributes: BTreeMap<String, f64>,
     pub inventory: crate::inventory::Inventory,
+    /// The container block this player has open, if any.
+    pub container: Option<crate::containers::OpenContainer>,
+    pub next_window_id: i32,
     /// Non-player entities this client has been shown.
     pub visible_entities: HashSet<i32>,
 }
@@ -187,6 +190,8 @@ impl Player {
                 effects: Vec::new(),
                 attributes: BTreeMap::new(),
                 inventory: crate::inventory::Inventory::new(),
+                container: None,
+                next_window_id: 0,
                 visible_entities: HashSet::new(),
             }),
         }

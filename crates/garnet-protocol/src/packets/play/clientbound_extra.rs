@@ -581,6 +581,37 @@ impl ClientboundPacket for GameRuleValues {
     }
 }
 
+/// Opens a window: a chest, a furnace, anything with slots.
+pub struct OpenScreen {
+    pub window_id: i32,
+    /// Index into the `minecraft:menu` registry.
+    pub menu_type: i32,
+    pub title: Text,
+}
+
+impl ClientboundPacket for OpenScreen {
+    const NAME: &'static str = "open_screen";
+    const STATE: State = State::Play;
+    fn write(&self, w: &mut PacketWriter) {
+        w.write_varint(self.window_id);
+        w.write_varint(self.menu_type);
+        w.write_text(&self.title);
+    }
+}
+
+/// Shuts a window the server opened.
+pub struct ContainerClose {
+    pub window_id: i32,
+}
+
+impl ClientboundPacket for ContainerClose {
+    const NAME: &'static str = "container_close";
+    const STATE: State = State::Play;
+    fn write(&self, w: &mut PacketWriter) {
+        w.write_varint(self.window_id);
+    }
+}
+
 /// Shoves an entity: knockback, and anything else that throws a player.
 pub struct SetEntityMotion {
     pub entity_id: i32,
