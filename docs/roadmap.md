@@ -7,7 +7,7 @@ panel, voice relaying and anti-cheat.
 
 What comes next, roughly in order:
 
-1. **Inventories and items** – container packets, creative slot, block placing with the held item, item drops.
+1. **Item entities and containers** – dropped items on the ground, chests and other block containers, crafting (inventories, placing and block drops are done).
 2. **Health and damage** – fall damage, hunger, respawn flow, combat between players.
 3. **Block behaviours** – gravity blocks, doors, beds, torches, fluids.
 4. **Entities** – item entities, then passive mobs with simple AI, then hostile mobs.

@@ -76,6 +76,7 @@ pub struct PlayerState {
     pub effects: Vec<ActiveEffect>,
     /// Attribute base values changed with /attribute, by full name.
     pub attributes: BTreeMap<String, f64>,
+    pub inventory: crate::inventory::Inventory,
 }
 
 /// A potion effect given with /effect.
@@ -158,6 +159,7 @@ impl Player {
                 tags: BTreeSet::new(),
                 effects: Vec::new(),
                 attributes: BTreeMap::new(),
+                inventory: crate::inventory::Inventory::new(),
             }),
         }
     }

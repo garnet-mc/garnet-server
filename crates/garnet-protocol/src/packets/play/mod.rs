@@ -2,6 +2,7 @@
 
 pub mod clientbound;
 mod clientbound_extra;
+pub mod items;
 pub mod serverbound;
 
 

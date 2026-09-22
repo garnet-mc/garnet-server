@@ -1,5 +1,7 @@
 //! Packets the client sends during play.
 
+pub use super::items::{ClickKind, ContainerClick, SetCreativeModeSlot};
+
 use crate::buffer::PacketReader;
 use crate::packets::config::ClientInformation;
 use crate::packets::{ServerboundPacket, State};

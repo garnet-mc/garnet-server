@@ -71,6 +71,10 @@ pub fn register(registry: &CommandRegistry) {
     add("attribute", "Reads or sets an attribute", "/attribute <target> <attribute> <get|base get|base set <value>>", cmd_attribute);
     add("spectate", "Spectates a player", "/spectate [target] [player]", cmd_spectate);
     add("transfer", "Sends players to another server", "/transfer <host> [port] [targets]", cmd_transfer);
+    add("give", "Gives items", "/give <targets> <item> [count]", cmd_give);
+    add("clear", "Removes items", "/clear [targets] [item] [maxCount]", cmd_clear);
+    add("item", "Replaces an inventory slot", "/item replace <targets> <slot> with <item> [count]", cmd_item);
+    add("enchant", "Enchants the held item", "/enchant <targets> <enchantment> [level]", cmd_enchant);
     add("banlist", "Lists bans", "/banlist [players|ips]", cmd_banlist);
     add("pardon-ip", "Removes an IP ban", "/pardon-ip <ip>", cmd_pardon_ip);
     add("execute", "Runs a command as or at a player", "/execute (as|at|positioned|if entity|unless entity) ... run <command>", cmd_execute);
@@ -90,10 +94,6 @@ pub fn register(registry: &CommandRegistry) {
 
 /// Commands the server accepts but cannot do until the named system lands.
 const NOT_YET: &[(&str, &str)] = &[
-    ("give", "inventories"),
-    ("clear", "inventories"),
-    ("item", "inventories"),
-    ("enchant", "inventories"),
     ("loot", "loot tables"),
     ("recipe", "recipes"),
     ("advancement", "advancements"),
@@ -1334,6 +1334,97 @@ fn cmd_pardon_ip(server: &Arc<Server>, sender: &CommandSender, args: &[String]) 
     } else {
         Err(format!("{ip} is not banned."))
     }
+}
+
+// ---------- items ----------
+
+/// `stone`, `minecraft:stone` or `stone[...]` (components are not parsed yet).
+fn parse_item(server: &Server, arg: &str) -> Result<i32, String> {
+    let name = arg.split('[').next().unwrap_or(arg);
+    crate::items::item_id(server, name).ok_or_else(|| format!("Unknown item '{name}'."))
+}
+
+fn cmd_give(server: &Arc<Server>, sender: &CommandSender, args: &[String]) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err("Usage: /give <targets> <item> [count]".into());
+    }
+    let targets = resolve_targets(server, sender, &args[0])?;
+    let item = parse_item(server, &args[1])?;
+    let count: i32 = args.get(2).map(|c| c.parse().unwrap_or(1)).unwrap_or(1).clamp(1, 6400);
+    for target in &targets {
+        let left = crate::items::give(server, target, cb::ItemStack::new(item, count));
+        let given = count - left;
+        sender.reply(Text::new(format!("Gave {given} [{}] to {}.", crate::items::item_name(server, item), target.name())));
+    }
+    Ok(())
+}
+
+fn cmd_clear(server: &Arc<Server>, sender: &CommandSender, args: &[String]) -> Result<(), String> {
+    let targets = match args.first() {
+        Some(t) => resolve_targets(server, sender, t)?,
+        None => sender.player().cloned().map(|p| vec![p]).ok_or("Say whose inventory to clear.")?,
+    };
+    let item = match args.get(1) {
+        Some(i) => Some(parse_item(server, i)?),
+        None => None,
+    };
+    let max: i32 = args.get(2).map(|c| c.parse().unwrap_or(-1)).unwrap_or(-1);
+    for target in &targets {
+        let removed = if max == 0 {
+            target.lock().inventory.count(item)
+        } else {
+            let n = target.lock().inventory.clear(item, max);
+            crate::items::sync_inventory(target);
+            n
+        };
+        sender.reply(Text::new(format!("Removed {removed} item(s) from {}.", target.name())));
+    }
+    Ok(())
+}
+
+fn cmd_item(server: &Arc<Server>, sender: &CommandSender, args: &[String]) -> Result<(), String> {
+    let usage = "Usage: /item replace <targets> <slot> with <item> [count]";
+    if args.len() < 5 || args[0] != "replace" || args[3] != "with" {
+        return Err(usage.into());
+    }
+    let targets = resolve_targets(server, sender, &args[1])?;
+    let item = parse_item(server, &args[4])?;
+    let count: i32 = args.get(5).map(|c| c.parse().unwrap_or(1)).unwrap_or(1).max(1);
+    for target in &targets {
+        let held = target.lock().held_slot;
+        let slot = crate::inventory::slot_by_name(&args[2], held).ok_or_else(|| format!("Unknown slot '{}'.", args[2]))?;
+        target.lock().inventory.set(slot, cb::ItemStack::new(item, count));
+        crate::items::sync_inventory(target);
+        sender.reply(Text::new(format!("Replaced slot {} of {}.", args[2], target.name())));
+    }
+    Ok(())
+}
+
+fn cmd_enchant(server: &Arc<Server>, sender: &CommandSender, args: &[String]) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err("Usage: /enchant <targets> <enchantment> [level]".into());
+    }
+    let targets = resolve_targets(server, sender, &args[0])?;
+    let name = if args[1].contains(':') { args[1].clone() } else { format!("minecraft:{}", args[1]) };
+    let enchantment = server.data.dynamic.id_of("enchantment", &name).ok_or_else(|| format!("Unknown enchantment '{}'.", args[1]))?;
+    let level: i32 = args.get(2).map(|l| l.parse().unwrap_or(1)).unwrap_or(1).clamp(1, 255);
+    for target in &targets {
+        {
+            let mut s = target.lock();
+            let held_slot = s.held_slot;
+            let stack = s.inventory.held_mut(held_slot);
+            if stack.is_empty() {
+                return Err(format!("{} is not holding anything.", target.name()));
+            }
+            let mut levels = garnet_protocol::packets::play::items::enchantments_in(&stack.patch).unwrap_or_default();
+            levels.retain(|(e, _)| *e != enchantment);
+            levels.push((enchantment, level));
+            stack.patch = cb::PatchBuilder::default().enchantments(&levels).build();
+        }
+        crate::items::sync_inventory(target);
+        sender.reply(Text::new(format!("Applied {} {level} to {}'s item.", args[1], target.name())));
+    }
+    Ok(())
 }
 
 // ---------- execute ----------

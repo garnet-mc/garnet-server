@@ -14,6 +14,7 @@ use crate::types::{BlockPos, GameProfile, Identifier};
 use uuid::Uuid;
 
 pub use super::clientbound_extra::*;
+pub use super::items::{ContainerSetContent, ContainerSetSlot, ItemStack, PatchBuilder, SetCursorItem, SetPlayerInventory};
 
 /// Everything the client needs to know about the dimension it is entering.
 /// Shared by [`Login`] and [`Respawn`].

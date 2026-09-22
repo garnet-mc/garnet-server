@@ -112,7 +112,9 @@ pub fn extract_datapack(inner_jar: &Path, target_dir: &Path) -> Result<()> {
         let after_ns = format!("/{after_ns}");
         let is_tag = after_ns.starts_with("/tags/");
         let is_registry = wanted.iter().any(|w| after_ns.starts_with(w));
-        if !is_tag && !is_registry {
+        // Block loot tables decide what breaking a block drops.
+        let is_block_loot = after_ns.starts_with("/loot_table/blocks/");
+        if !is_tag && !is_registry && !is_block_loot {
             continue;
         }
         let out_path = target_dir.join(name.trim_start_matches("data/"));
@@ -217,6 +219,17 @@ pub struct Tags {
 }
 
 impl Tags {
+    /// Member ids of one tag, e.g. `("minecraft:block", "minecraft:mineable/pickaxe")`.
+    pub fn members(&self, registry: &str, tag: &str) -> Option<&[i32]> {
+        let registry = with_namespace(registry);
+        let tag = with_namespace(tag);
+        self.registries
+            .iter()
+            .find(|(r, _)| r.to_string() == registry)
+            .and_then(|(_, tags)| tags.iter().find(|(t, _)| t.to_string() == tag))
+            .map(|(_, ids)| ids.as_slice())
+    }
+
     pub fn load(tags_root: &Path, registries: &Registries, dynamic: &DynamicRegistries) -> Result<Self> {
         // tags_root is "<datapack>/tags" but the files live under
         // "<datapack>/<namespace>/tags/<registry path>/<tag>.json".

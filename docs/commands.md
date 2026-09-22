@@ -71,10 +71,23 @@ work everywhere a player is expected; coordinates accept `~` offsets.
 `as` runs the command as each player with the *original* sender's permissions,
 like vanilla.
 
+## Items
+
+| Command | What it does |
+| --- | --- |
+| `/give <targets> <item> [count]` | |
+| `/clear [targets] [item] [maxCount]` | `maxCount 0` only counts |
+| `/item replace <targets> <slot> with <item> [count]` | Slots: `weapon.mainhand`, `weapon.offhand`, `armor.head/chest/legs/feet`, `hotbar.N`, `inventory.N`, `container.N` |
+| `/enchant <targets> <enchantment> [level]` | On the held item |
+
+Inventories are real: survival players pick up what blocks drop (from
+Mojang's loot tables, with tool and silk touch/fortune rules), place what they
+hold, and keep their inventory across rejoins.
+
 ## Not there yet
 
-`give`, `clear`, `item`, `enchant`, `loot`, `recipe`, `advancement`, `summon`,
-`ride`, `locate`, `place`, `fillbiome`, `function`, `datapack`, `schedule`,
-`return`, `data`, `debug`, `jfr`, `perf` are registered so tab completion and
-`/help` are complete, and each one says which system it is waiting on
-(inventories, entities, structures, data packs). They arrive with those systems.
+`loot`, `recipe`, `advancement`, `summon`, `ride`, `locate`, `place`,
+`fillbiome`, `function`, `datapack`, `schedule`, `return`, `data`, `debug`,
+`jfr`, `perf` are registered so tab completion and `/help` are complete, and
+each one says which system it is waiting on (entities, structures, data
+packs). They arrive with those systems.

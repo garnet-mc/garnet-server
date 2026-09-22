@@ -76,6 +76,8 @@ pub struct Server {
     pub rules: RwLock<crate::rules::WorldRules>,
     /// Scoreboard, teams and boss bars.
     pub boards: Mutex<crate::boards::Boards>,
+    /// Block drop tables.
+    pub loot: crate::loot::LootTables,
     pub voice: Option<VoiceServer>,
     pub panel: Mutex<Option<Panel>>,
     pub logs: LogSink,

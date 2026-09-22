@@ -27,6 +27,8 @@ pub struct SavedPlayer {
     pub tags: Vec<String>,
     pub effects: Vec<crate::player::ActiveEffect>,
     pub attributes: Vec<(String, f64)>,
+    /// (slot, item name, count, component patch)
+    pub inventory: Vec<(usize, String, i32, Vec<u8>)>,
 }
 
 fn path_for(server: &Server, uuid: Uuid) -> PathBuf {
@@ -66,6 +68,22 @@ pub fn load(server: &Server, uuid: Uuid) -> Option<SavedPlayer> {
         effects: root
             .get_list("active_effects")
             .map(|l| l.iter().filter_map(read_effect).collect())
+            .unwrap_or_default(),
+        inventory: root
+            .get_list("Inventory")
+            .map(|l| {
+                l.iter()
+                    .filter_map(|t| {
+                        let c = t.as_compound()?;
+                        let slot = c.get_i32("Slot")?;
+                        let patch = match c.get("garnet_patch") {
+                            Some(NbtTag::ByteArray(b)) => b.iter().map(|x| *x as u8).collect(),
+                            _ => Vec::new(),
+                        };
+                        Some((slot as usize, c.get_str("id")?.to_owned(), c.get_i32("count").unwrap_or(1), patch))
+                    })
+                    .collect()
+            })
             .unwrap_or_default(),
         attributes: root
             .get_list("garnet_attributes")
@@ -140,6 +158,24 @@ pub fn save(server: &Server, player: &Player) {
             .collect();
         root.put("active_effects", effects);
     }
+    let inventory: Vec<NbtTag> = state
+        .inventory
+        .slots
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| !s.is_empty())
+        .map(|(slot, s)| {
+            let mut c = NbtCompound::new();
+            c.put("Slot", slot as i8);
+            c.put("id", crate::items::item_name(server, s.item).as_str());
+            c.put("count", s.count);
+            if !s.patch.is_empty() {
+                c.put("garnet_patch", NbtTag::ByteArray(s.patch.iter().map(|b| *b as i8).collect()));
+            }
+            NbtTag::Compound(c)
+        })
+        .collect();
+    root.put("Inventory", inventory);
     if !state.attributes.is_empty() {
         let attributes: Vec<NbtTag> = state
             .attributes

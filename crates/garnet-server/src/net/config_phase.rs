@@ -159,6 +159,18 @@ Join with the Garnet launcher and they install automatically:
             })
             .collect();
         state.attributes = saved.attributes.into_iter().collect();
+        for (slot, name, count, patch) in saved.inventory {
+            if let Some(item) = crate::items::item_id(&server, &name) {
+                state.inventory.set(
+                    slot,
+                    garnet_protocol::packets::play::items::ItemStack {
+                        item,
+                        count,
+                        patch,
+                    },
+                );
+            }
+        }
     }
     if let Some(info) = &conn.client_info {
         player.lock().locale = info.locale.clone();

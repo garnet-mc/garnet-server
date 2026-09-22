@@ -135,6 +135,7 @@ pub async fn on_join(server: &Arc<Server>, player: &Arc<Player>) {
         (s.xp_level, s.xp_total)
     };
     player.send(&cb::SetExperience { bar: 0.0, level, total });
+    crate::items::sync_inventory(player);
     let (effects, attributes) = {
         let s = player.lock();
         (s.effects.clone(), s.attributes.clone())
@@ -384,6 +385,18 @@ pub async fn handle(server: &Arc<Server>, player: &Arc<Player>, name: &str, r: &
                 player.lock().held_slot = p.slot as i32;
             }
         }
+        "set_creative_mode_slot" => {
+            let p = sb::SetCreativeModeSlot::read(r)?;
+            crate::items::handle_creative_slot(player, p.slot, p.item);
+        }
+        "container_click" => {
+            let p = sb::ContainerClick::read(r)?;
+            crate::items::handle_click(server, player, &p);
+        }
+        "container_close" => {
+            let _ = sb::ContainerClose::read(r)?;
+            crate::items::sync_inventory(player);
+        }
         "player_abilities" => {
             let p = sb::ServerboundPlayerAbilities::read(r)?;
             let allowed = matches!(player.lock().game_mode, GameMode::Creative | GameMode::Spectator);
@@ -421,7 +434,7 @@ pub async fn handle(server: &Arc<Server>, player: &Arc<Player>, name: &str, r: &
             }
         }
         "interact" | "attack" | "chat_ack" | "chat_session_update" | "client_tick_end" | "pong"
-        | "container_close" | "configuration_acknowledged" | "cookie_response" => {}
+        | "configuration_acknowledged" | "cookie_response" => {}
         _ => {}
     }
     Ok(())
@@ -639,6 +652,18 @@ fn protected(server: &Server, player: &Player, pos: BlockPos) -> bool {
 fn handle_dig(server: &Arc<Server>, player: &Arc<Player>, action: sb::PlayerAction) {
     use sb::DigStatus::*;
     let game_mode = player.lock().game_mode;
+    match action.status {
+        SwapItemWithOffhand => {
+            crate::items::swap_hands(player);
+            return;
+        }
+        DropItem | DropItemStack => {
+            // Item entities are not here yet: the item stays in the inventory.
+            crate::items::sync_inventory(player);
+            return;
+        }
+        _ => {}
+    }
     let breaks = match (action.status, game_mode) {
         (StartDigging, GameMode::Creative) => true,
         (FinishDigging, GameMode::Survival | GameMode::Adventure) => game_mode == GameMode::Survival,
@@ -688,6 +713,7 @@ fn handle_dig(server: &Arc<Server>, player: &Arc<Player>, action: sb::PlayerActi
     } else {
         let air = server.data.blocks.default_state("air").unwrap_or(0) as u32;
         server.set_block(action.position, air);
+        crate::items::collect_drops(server, player, current);
     }
     done();
 }
@@ -722,13 +748,20 @@ fn handle_use_item_on(server: &Arc<Server>, player: &Arc<Player>, use_on: sb::Us
     };
     server.mods.lock().unwrap_or_else(|e| e.into_inner()).dispatch(&event);
 
-    // Inventories are not tracked yet, so the server cannot know what the
-    // client is placing. Undo the client's prediction so it never desyncs.
-    if let Some(dir) = garnet_protocol::Direction::from_id(use_on.face) {
-        let (dx, dy, dz) = dir.offset();
-        restore_block(server, player, target.offset(dx, dy, dz));
+    let eyes = player.lock().eye_position();
+    let creative = player.lock().game_mode == GameMode::Creative;
+    let too_far = server.anticheat.check_reach(eyes, (target.x, target.y, target.z), creative).is_some();
+    let placed = !too_far
+        && !protected(server, player, target)
+        && crate::items::place_held(server, player, target, use_on.face, (use_on.cursor_x, use_on.cursor_y, use_on.cursor_z), use_on.hand);
+    if !placed {
+        // Undo the client's prediction so it never desyncs.
+        if let Some(dir) = garnet_protocol::Direction::from_id(use_on.face) {
+            let (dx, dy, dz) = dir.offset();
+            restore_block(server, player, target.offset(dx, dy, dz));
+        }
+        restore_block(server, player, target);
     }
-    restore_block(server, player, target);
     player.send(&cb::AcknowledgeBlockChange {
         sequence: use_on.sequence,
     });

@@ -15,8 +15,11 @@ mod client_mods;
 mod commands;
 mod config;
 mod entities;
+mod inventory;
+mod items;
 mod lists;
 mod logging;
+mod loot;
 mod mod_host;
 mod net;
 mod player;
@@ -162,6 +165,7 @@ async fn async_main(cli: Cli) -> Result<()> {
             scheduled: Mutex::new(Vec::new()),
             commands,
             rules: RwLock::new(rules::WorldRules::load(&root.join(&config.world.name), &config.world.difficulty)),
+            loot: loot::LootTables::new(&data),
             boards: Mutex::new(boards::Boards::load(&root.join(&config.world.name))),
             voice,
             panel: Mutex::new(None),

@@ -76,6 +76,12 @@ impl GameData {
         if !reports_dir.join("packets.json").exists() {
             tracing::info!("preparing game data for Minecraft {version_id} (first run for this version)");
             prepare(data_dir, &version_dir, &version_id).await?;
+        } else if !version_dir.join("datapack").join("minecraft").join("loot_table").exists() {
+            // Data prepared by an older Garnet: pull the newer files out of the jar.
+            let inner_jar = version_dir.join("server-inner.jar");
+            if inner_jar.exists() {
+                datapack::extract_datapack(&inner_jar, &version_dir.join("datapack"))?;
+            }
         }
 
         Self::load_cached(&version_dir, &version_id)
