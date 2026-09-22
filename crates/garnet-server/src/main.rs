@@ -8,6 +8,7 @@ mod admin_bridge;
 mod anticheat;
 mod audit;
 mod backup;
+mod blocks;
 mod board_commands;
 mod boards;
 mod chunks;
@@ -179,6 +180,7 @@ async fn async_main(cli: Cli) -> Result<()> {
             recipes: recipes::Recipes::load(&data),
             mob_loot: loot::LootTables::entities(&data),
             furnaces: furnaces::Furnaces::new(),
+            block_ticks: Mutex::new(Vec::new()),
             entities: Mutex::new(world_entities::Entities::new(&root.join(&config.world.name))),
             boards: Mutex::new(boards::Boards::load(&root.join(&config.world.name))),
             voice,
@@ -244,6 +246,7 @@ async fn async_main(cli: Cli) -> Result<()> {
         rcon::start(Arc::clone(&server)).await.context("starting RCON")?;
     }
 
+    server.watch_ticks();
     tokio::spawn(Arc::clone(&server).run_ticks());
     tokio::spawn(console_input(Arc::clone(&server)));
     tokio::spawn(shutdown_signal(Arc::clone(&server)));

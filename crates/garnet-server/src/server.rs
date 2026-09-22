@@ -84,6 +84,8 @@ pub struct Server {
     pub mob_loot: crate::loot::LootTables,
     /// The furnaces that are currently burning.
     pub furnaces: crate::furnaces::Furnaces,
+    /// Blocks waiting for their turn: a button to pop out, sand to fall.
+    pub block_ticks: Mutex<Vec<(garnet_protocol::BlockPos, u64)>>,
     /// Items on the ground, mobs and other non-player entities.
     pub entities: Mutex<crate::world_entities::Entities>,
     pub voice: Option<VoiceServer>,
@@ -356,9 +358,22 @@ impl Server {
         });
     }
 
+    /// Asks for `blocks::scheduled` to run on this block in a while.
+    pub fn schedule_block(&self, pos: garnet_protocol::BlockPos, delay: u64) {
+        let when = self.current_tick() + delay.max(1);
+        let mut ticks = self.block_ticks.lock().unwrap_or_else(|e| e.into_inner());
+        if !ticks.iter().any(|(p, _)| *p == pos) {
+            ticks.push((pos, when));
+        }
+    }
+
     pub fn set_block(&self, pos: garnet_protocol::BlockPos, state: u32) -> bool {
         let changed = self.world().set_block(pos, state).unwrap_or(false);
         if changed {
+            // This block, and the one above it, may now have nothing
+            // holding them up.
+            self.schedule_block(pos, 2);
+            self.schedule_block(pos.offset(0, 1, 0), 2);
             self.invalidate_chunk(pos.chunk());
             self.broadcast_near(
                 pos.chunk(),
@@ -407,6 +422,34 @@ impl Server {
 
     // ---- the tick loop ----
 
+    /// Watches the tick counter from outside the tick loop: if the server
+    /// stops ticking, something is stuck, and saying so beats going quiet.
+    pub fn watch_ticks(self: &Arc<Self>) {
+        let server = Arc::clone(self);
+        std::thread::Builder::new()
+            .name("garnet-watchdog".to_owned())
+            .spawn(move || {
+                let mut last = server.current_tick();
+                let mut stalled = 0u32;
+                loop {
+                    std::thread::sleep(Duration::from_secs(5));
+                    let now = server.current_tick();
+                    if now == last {
+                        stalled += 5;
+                        if stalled % 15 == 0 {
+                            tracing::error!(
+                                "the server has not ticked for {stalled}s (stuck at tick {now});                                  players will see the world frozen"
+                            );
+                        }
+                    } else {
+                        stalled = 0;
+                        last = now;
+                    }
+                }
+            })
+            .ok();
+    }
+
     pub async fn run_ticks(self: Arc<Self>) {
         let mut interval = tokio::time::interval(Duration::from_millis(50));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -434,6 +477,7 @@ impl Server {
             crate::survival::tick(&self, tick);
             crate::mobs::tick(&self, tick);
             crate::furnaces::tick(&self);
+            crate::blocks::tick(&self, tick);
             self.apply_mod_actions();
             self.tick_mods(tick);
 

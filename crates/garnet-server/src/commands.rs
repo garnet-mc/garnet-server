@@ -531,7 +531,20 @@ fn cmd_spawn(server: &Arc<Server>, sender: &CommandSender, _: &[String]) -> Resu
 }
 
 fn cmd_time(server: &Arc<Server>, sender: &CommandSender, args: &[String]) -> Result<(), String> {
-    let usage = "Usage: /time set <day|night|noon|midnight|ticks>";
+    let usage = "Usage: /time set <day|night|noon|midnight|ticks> | /time query <daytime|gametime|day>";
+    if args.first().map(String::as_str) == Some("query") {
+        let (day_time, age) = {
+            let world = server.world();
+            (world.settings.time_of_day, world.settings.age)
+        };
+        let value = match args.get(1).map(String::as_str) {
+            Some("gametime") => age,
+            Some("day") => age / 24000,
+            _ => day_time,
+        };
+        sender.reply(Text::new(format!("The time is {value}")));
+        return Ok(());
+    }
     if args.len() != 2 || args[0] != "set" {
         return Err(usage.into());
     }

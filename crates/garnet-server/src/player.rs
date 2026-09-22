@@ -95,6 +95,8 @@ pub struct PlayerState {
     pub inventory: crate::inventory::Inventory,
     /// The container block this player has open, if any.
     pub container: Option<crate::containers::OpenContainer>,
+    /// In bed, waiting for the night to pass.
+    pub sleeping: bool,
     /// The open crafting grid: slot 0 is the result, 1-9 the grid itself.
     pub crafting: Vec<garnet_protocol::packets::play::items::ItemStack>,
     pub next_window_id: i32,
@@ -193,6 +195,7 @@ impl Player {
                 attributes: BTreeMap::new(),
                 inventory: crate::inventory::Inventory::new(),
                 container: None,
+                sleeping: false,
                 crafting: Vec::new(),
                 next_window_id: 0,
                 visible_entities: HashSet::new(),

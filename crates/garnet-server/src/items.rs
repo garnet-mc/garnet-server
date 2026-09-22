@@ -351,6 +351,8 @@ pub fn place_held(server: &Arc<Server>, player: &Arc<Player>, target: BlockPos, 
     let state = blocks.state_with(&block_name, &props).or(Some(block.default_state)).unwrap() as u32;
 
     if !server.set_block(pos, state) {
+    crate::blocks::changed(server, pos);
+    server.schedule_block(pos, 2);
         return false;
     }
     if mode == GameMode::Survival {

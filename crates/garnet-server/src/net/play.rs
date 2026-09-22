@@ -340,6 +340,7 @@ pub async fn handle(server: &Arc<Server>, player: &Arc<Player>, name: &str, r: &
             match p.action {
                 sb::PlayerCommandAction::StartSprinting => s.sprinting = true,
                 sb::PlayerCommandAction::StopSprinting => s.sprinting = false,
+                sb::PlayerCommandAction::LeaveBed => s.sleeping = false,
                 _ => {}
             }
         }
@@ -737,6 +738,7 @@ fn handle_dig(server: &Arc<Server>, player: &Arc<Player>, action: sb::PlayerActi
         server.set_block(action.position, air);
         crate::items::collect_drops(server, player, current, action.position);
         crate::survival::mined(player);
+        crate::blocks::changed(server, action.position);
     }
     done();
 }
@@ -783,6 +785,18 @@ fn handle_use_item_on(server: &Arc<Server>, player: &Arc<Player>, use_on: sb::Us
             .map(|b| b.name.clone())
             .unwrap_or_default();
         if crate::containers::open(server, player, target, &block) {
+            player.send(&cb::AcknowledgeBlockChange {
+                sequence: use_on.sequence,
+            });
+            return;
+        }
+        let props = server
+            .data
+            .blocks
+            .state(clicked as i32)
+            .map(|s| s.properties.clone())
+            .unwrap_or_default();
+        if crate::blocks::interact(server, player, target, &block, &props) {
             player.send(&cb::AcknowledgeBlockChange {
                 sequence: use_on.sequence,
             });

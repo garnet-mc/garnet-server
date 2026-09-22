@@ -208,6 +208,11 @@ impl WorldRules {
             .unwrap_or_default()
     }
 
+    /// A numeric game rule, or None when it is not set to a number.
+    pub fn game_rule_int(&self, name: &str) -> Option<i32> {
+        self.game_rules.get(name).and_then(|v| v.parse().ok())
+    }
+
     pub fn game_rule_bool(&self, name: &str) -> bool {
         self.game_rule(name) == "true"
     }
