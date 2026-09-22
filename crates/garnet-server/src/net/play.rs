@@ -400,7 +400,7 @@ pub async fn handle(server: &Arc<Server>, player: &Arc<Player>, name: &str, r: &
         }
         "container_close" => {
             let _ = sb::ContainerClose::read(r)?;
-            crate::containers::close(player);
+            crate::containers::close(server, player);
             crate::items::sync_inventory(player);
         }
         "player_abilities" => {

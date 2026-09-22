@@ -78,6 +78,8 @@ pub struct Server {
     pub boards: Mutex<crate::boards::Boards>,
     /// Block drop tables.
     pub loot: crate::loot::LootTables,
+    /// What the crafting grid can make.
+    pub recipes: crate::recipes::Recipes,
     /// Items on the ground, mobs and other non-player entities.
     pub entities: Mutex<crate::world_entities::Entities>,
     pub voice: Option<VoiceServer>,

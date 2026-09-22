@@ -22,9 +22,19 @@ use std::sync::Arc;
 pub struct OpenContainer {
     pub pos: BlockPos,
     pub window_id: i32,
-    /// How many slots belong to the block rather than the player.
+    /// How many slots belong to the window rather than the player.
     pub size: usize,
     pub title: String,
+    pub kind: Kind,
+}
+
+/// Where a window's own slots live.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// In the block entity beside the block.
+    Block,
+    /// On the player: a crafting grid with its result in slot 0.
+    Crafting,
 }
 
 /// The containers we know how to open, and how big they are. Ender chests
@@ -51,6 +61,9 @@ pub fn is_container(block: &str) -> bool {
 
 /// Right-clicking a container block: show it.
 pub fn open(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos, block: &str) -> bool {
+    if block == "minecraft:crafting_table" {
+        return open_crafting(server, player, pos);
+    }
     let Some((size, menu, title)) = container_size(block) else {
         return false;
     };
@@ -65,6 +78,7 @@ pub fn open(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos, block: &s
             window_id: id,
             size,
             title: title.to_owned(),
+            kind: Kind::Block,
         });
         id
     };
@@ -78,6 +92,65 @@ pub fn open(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos, block: &s
     true
 }
 
+/// A crafting table: nine slots to lay things out in and one to take the
+/// result from. The grid belongs to the player while it is open, and is
+/// handed back when they close it.
+fn open_crafting(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos) -> bool {
+    let window_id = {
+        let mut s = player.lock();
+        s.next_window_id = s.next_window_id % 100 + 1;
+        let id = s.next_window_id;
+        s.crafting = vec![ItemStack::EMPTY; 10];
+        s.container = Some(OpenContainer {
+            pos,
+            window_id: id,
+            size: 10,
+            title: "Crafting".to_owned(),
+            kind: Kind::Crafting,
+        });
+        id
+    };
+    let menu_type = server.data.registries.id_of("menu", "minecraft:crafting").unwrap_or(0);
+    player.send(&cb::OpenScreen {
+        window_id,
+        menu_type,
+        title: Text::new("Crafting"),
+    });
+    let grid = player.lock().crafting.clone();
+    send_content(server, player, &grid);
+    true
+}
+
+/// Works out what the grid makes and puts it in the result slot.
+pub fn update_result(server: &Arc<Server>, slots: &mut [ItemStack], grid: std::ops::Range<usize>, width: usize) {
+    let stacks: Vec<ItemStack> = slots[grid].to_vec();
+    let names = crate::recipes::grid_names(server, &stacks);
+    slots[0] = match server.recipes.result(&server.data, &names, width) {
+        Some((name, count)) => match crate::items::item_id(server, &name) {
+            Some(id) => ItemStack {
+                item: id,
+                count,
+                patch: Vec::new(),
+            },
+            None => ItemStack::EMPTY,
+        },
+        None => ItemStack::EMPTY,
+    };
+}
+
+/// Takes one craft out of the grid: every slot that was used loses one.
+fn consume_grid(slots: &mut [ItemStack], grid: std::ops::Range<usize>) {
+    for slot in &mut slots[grid] {
+        if slot.is_empty() {
+            continue;
+        }
+        slot.count -= 1;
+        if slot.count <= 0 {
+            *slot = ItemStack::EMPTY;
+        }
+    }
+}
+
 /// A click inside an open container window.
 pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) {
     let Some(open) = player.lock().container.clone() else {
@@ -89,20 +162,37 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
         return;
     }
 
-    // One flat list: the block's slots, then the player's main inventory,
-    // then their hotbar, which is the order the window is laid out in.
-    let mut slots = read_items(server, open.pos, open.size);
+    // One flat list: the window's own slots, then the player's main
+    // inventory, then their hotbar, in the order the window is laid out.
+    let mut slots = match open.kind {
+        Kind::Block => read_items(server, open.pos, open.size),
+        Kind::Crafting => player.lock().crafting.clone(),
+    };
     {
         let s = player.lock();
         slots.extend(s.inventory.slots[MAIN_START..HOTBAR_START].iter().cloned());
         slots.extend(s.inventory.slots[HOTBAR_START..HOTBAR_START + 9].iter().cloned());
     }
     let mut cursor = player.lock().inventory.cursor.clone();
+    let taking_result = open.kind == Kind::Crafting && click.slot == 0;
+    if taking_result && slots[0].is_empty() {
+        crate::items::sync_inventory(player);
+        return;
+    }
     apply(server, &mut slots, &mut cursor, &click, open.size);
+    if open.kind == Kind::Crafting {
+        if taking_result {
+            consume_grid(&mut slots, 1..10);
+        }
+        update_result(server, &mut slots, 1..10, 3);
+    }
 
     // Put everything back where it came from.
     let (block_items, player_items) = slots.split_at(open.size);
-    write_items(server, open.pos, block_items);
+    match open.kind {
+        Kind::Block => write_items(server, open.pos, block_items),
+        Kind::Crafting => player.lock().crafting = block_items.to_vec(),
+    }
     {
         let mut s = player.lock();
         for (i, stack) in player_items[..27].iter().enumerate() {
@@ -114,7 +204,9 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
         s.inventory.cursor = cursor;
     }
     send_content(server, player, block_items);
-    refresh_others(server, player, open.pos);
+    if open.kind == Kind::Block {
+        refresh_others(server, player, open.pos);
+    }
 }
 
 /// Applies one click to the combined slot list.
@@ -240,9 +332,42 @@ fn move_into(server: &Arc<Server>, slots: &mut [ItemStack], from: usize, start: 
     };
 }
 
-/// Closing the window: nothing to save, the block already has it.
-pub fn close(player: &Arc<Player>) {
-    player.lock().container = None;
+/// Closing the window. A block keeps what it holds; a crafting grid gives
+/// what is still on it back to the player, or drops it at their feet.
+pub fn close(server: &Arc<Server>, player: &Arc<Player>) {
+    let open = player.lock().container.take();
+    // Whatever was on the cursor goes back to the player either way, or it
+    // would quietly disappear.
+    let mut left: Vec<ItemStack> = Vec::new();
+    {
+        let mut s = player.lock();
+        let cursor = std::mem::replace(&mut s.inventory.cursor, ItemStack::EMPTY);
+        if !cursor.is_empty() {
+            left.push(cursor);
+        }
+    }
+    if open.map(|c| c.kind) == Some(Kind::Crafting) {
+        let mut s = player.lock();
+        let grid = std::mem::take(&mut s.crafting);
+        drop(s);
+        left.extend(grid.into_iter().skip(1).filter(|stack| !stack.is_empty()));
+    }
+    if left.is_empty() {
+        return;
+    }
+    for stack in left {
+        let name = crate::items::item_name(server, stack.item);
+        let max = crate::inventory::max_stack_size(&name);
+        let over = player.lock().inventory.add(stack, max);
+        if !over.is_empty() {
+            let (x, y, z, yaw, pitch) = {
+                let s = player.lock();
+                (s.x, s.y, s.z, s.yaw, s.pitch)
+            };
+            crate::items::throw_from(server, over, yaw, pitch, x, y, z);
+        }
+    }
+    crate::items::sync_inventory(player);
 }
 
 /// Sends the whole window: the block's slots, then the player's own.
@@ -367,7 +492,7 @@ pub fn spill(server: &Arc<Server>, pos: BlockPos, block: &str) {
             player.send(&cb::ContainerClose {
                 window_id: player.lock().container.as_ref().map(|c| c.window_id).unwrap_or(0),
             });
-            close(&player);
+            close(server, &player);
         }
     }
 }

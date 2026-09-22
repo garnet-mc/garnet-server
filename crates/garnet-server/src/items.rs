@@ -50,10 +50,42 @@ pub fn handle_click(server: &Server, player: &Player, click: &ContainerClick) {
         return;
     }
     let creative = player.lock().game_mode == GameMode::Creative;
+    // Slots 1-4 are the two-by-two grid in the player's own screen, and
+    // slot 0 is what it makes.
+    let taking_result = click.slot == 0 && !player.lock().inventory.slots[0].is_empty();
     {
         let mut state = player.lock();
         let limit = |id: i32| max_stack(server, id);
         state.inventory.click(click, &limit, creative);
+    }
+    if (0..5).contains(&click.slot) {
+        let mut state = player.lock();
+        if taking_result {
+            for slot in &mut state.inventory.slots[1..5] {
+                if slot.is_empty() {
+                    continue;
+                }
+                slot.count -= 1;
+                if slot.count <= 0 {
+                    *slot = ItemStack::EMPTY;
+                }
+            }
+        }
+        let grid: Vec<ItemStack> = state.inventory.slots[1..5].to_vec();
+        drop(state);
+        let names = crate::recipes::grid_names(server, &grid);
+        let result = server
+            .recipes
+            .result(&server.data, &names, 2)
+            .and_then(|(name, count)| {
+                item_id(server, &name).map(|id| ItemStack {
+                    item: id,
+                    count,
+                    patch: Vec::new(),
+                })
+            })
+            .unwrap_or(ItemStack::EMPTY);
+        player.lock().inventory.slots[0] = result;
     }
     sync_inventory(player);
 }

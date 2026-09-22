@@ -28,6 +28,7 @@ mod net;
 mod player;
 mod playerdata;
 mod rcon;
+mod recipes;
 mod rules;
 mod server;
 mod survival;
@@ -173,6 +174,7 @@ async fn async_main(cli: Cli) -> Result<()> {
             commands,
             rules: RwLock::new(rules::WorldRules::load(&root.join(&config.world.name), &config.world.difficulty)),
             loot: loot::LootTables::new(&data),
+            recipes: recipes::Recipes::load(&data),
             entities: Mutex::new(world_entities::Entities::new(&root.join(&config.world.name))),
             boards: Mutex::new(boards::Boards::load(&root.join(&config.world.name))),
             voice,

@@ -112,9 +112,11 @@ pub fn extract_datapack(inner_jar: &Path, target_dir: &Path) -> Result<()> {
         let after_ns = format!("/{after_ns}");
         let is_tag = after_ns.starts_with("/tags/");
         let is_registry = wanted.iter().any(|w| after_ns.starts_with(w));
-        // Block loot tables decide what breaking a block drops.
+        // Block loot tables decide what breaking a block drops, and the
+        // recipes are what players craft with.
         let is_block_loot = after_ns.starts_with("/loot_table/blocks/");
-        if !is_tag && !is_registry && !is_block_loot {
+        let is_recipe = after_ns.starts_with("/recipe/");
+        if !is_tag && !is_registry && !is_block_loot && !is_recipe {
             continue;
         }
         let out_path = target_dir.join(name.trim_start_matches("data/"));

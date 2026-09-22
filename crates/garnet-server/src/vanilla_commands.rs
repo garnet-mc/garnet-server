@@ -1368,14 +1368,15 @@ fn cmd_clear(server: &Arc<Server>, sender: &CommandSender, args: &[String]) -> R
     };
     let max: i32 = args.get(2).map(|c| c.parse().unwrap_or(-1)).unwrap_or(-1);
     for target in &targets {
-        let removed = if max == 0 {
-            target.lock().inventory.count(item)
+        if max == 0 {
+            // Vanilla's dry run: say what is there, take nothing.
+            let found = target.lock().inventory.count(item);
+            sender.reply(Text::new(format!("Found {found} matching item(s) on {}.", target.name())));
         } else {
-            let n = target.lock().inventory.clear(item, max);
+            let removed = target.lock().inventory.clear(item, max);
             crate::items::sync_inventory(target);
-            n
-        };
-        sender.reply(Text::new(format!("Removed {removed} item(s) from {}.", target.name())));
+            sender.reply(Text::new(format!("Removed {removed} item(s) from {}.", target.name())));
+        }
     }
     Ok(())
 }
