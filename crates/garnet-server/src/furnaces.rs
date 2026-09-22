@@ -244,12 +244,11 @@ fn smelt_result(server: &Arc<Server>, block: &str, input: &ItemStack, output: &I
 
 /// Switches the block between its lit and unlit states.
 fn set_lit(server: &Arc<Server>, pos: BlockPos, block: &str, lit: bool) {
-    let mut props = std::collections::BTreeMap::new();
-    if let Some(state) = server.world().get_block(pos).ok() {
-        if let Some(existing) = server.data.blocks.state(state as i32) {
-            props = existing.properties.clone();
-        }
-    }
+    let current = server.world().get_block(pos).ok();
+    let mut props = current
+        .and_then(|state| server.data.blocks.state(state as i32))
+        .map(|state| state.properties.clone())
+        .unwrap_or_default();
     props.insert("lit".to_owned(), lit.to_string());
     if let Some(state) = server.data.blocks.state_with(block, &props) {
         server.set_block(pos, state as u32);

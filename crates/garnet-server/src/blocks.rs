@@ -243,6 +243,10 @@ pub fn scheduled(server: &Arc<Server>, pos: BlockPos) {
         crate::fluids::tick(server, pos);
         return;
     }
+    if short.ends_with("_pressure_plate") {
+        crate::redstone::check_plate(server, pos);
+        return;
+    }
     if crate::redstone::is_redstone(&name) {
         crate::redstone::update(server, pos);
     }

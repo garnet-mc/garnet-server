@@ -240,6 +240,10 @@ pub fn moved(server: &Arc<Server>, player: &Arc<Player>, from: (f64, f64, f64), 
         player.lock().fall_distance = 0.0;
         return;
     }
+    if to.0.floor() != from.0.floor() || to.2.floor() != from.2.floor() || to.1.floor() != from.1.floor() {
+        let under = BlockPos::new(to.0.floor() as i32, to.1.floor() as i32, to.2.floor() as i32);
+        crate::redstone::step_on(server, under);
+    }
     let walked = ((to.0 - from.0).powi(2) + (to.2 - from.2).powi(2)).sqrt() as f32;
     let in_water = block_name(server, to.0, to.1 + 0.1, to.2).contains("water");
     let landed = {

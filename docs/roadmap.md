@@ -5,14 +5,14 @@ configuration handshake, chunk streaming, movement, chat, the vanilla
 command set, block breaking and placing, sky and block lighting, item
 entities, health, hunger and combat, chests, crafting and furnaces,
 mobs that spawn, wander and fight back, doors, beds, falling blocks,
-growing crops, flowing water and lava, and redstone wire, torches,
-repeaters and the things they switch, saves, mods, the admin panel,
+growing crops, flowing water and lava, and redstone with wire, torches,
+repeaters, pistons and pressure plates, saves, mods, the admin panel,
 voice relaying and anti-cheat.
 
 What comes next, roughly in order:
 
 1. **The rest of the workbenches** – anvils, enchanting, brewing, the stonecutter and the grindstone (chests, the crafting grid and furnaces are done).
-2. **The rest of redstone** – pistons, comparators, observers, pressure plates and the blocks that act on a signal: dispensers, droppers, note blocks and TNT (wire, torches, levers, buttons, repeaters, lamps and doors are done).
+2. **The rest of redstone** – comparators, observers, and the blocks that act on a signal: dispensers, droppers, note blocks and TNT (wire, torches, levers, buttons, plates, repeaters, pistons, lamps and doors are done).
 3. **More mobs** – skeletons and creepers want arrows and explosions first, and everything wants proper pathfinding, sounds and experience orbs.
 4. **Vanilla-compatible terrain** – reproduce Mojang's noise generator from the datapack settings so seeds match.
 6. **Redstone**.

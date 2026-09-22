@@ -44,7 +44,9 @@ pub fn is_redstone(name: &str) -> bool {
     matches!(
         short,
         "redstone_wire" | "redstone_torch" | "redstone_wall_torch" | "redstone_block" | "repeater" | "redstone_lamp" | "lever"
-    ) || short.ends_with("_button")
+    ) || short.ends_with("_piston")
+        || short == "piston"
+        || short.ends_with("_button")
         || short.ends_with("_door")
         || short.ends_with("_trapdoor")
         || short.ends_with("_fence_gate")
@@ -76,6 +78,7 @@ fn refresh(server: &Arc<Server>, pos: BlockPos) {
         "redstone_wire" => refresh_wire(server, pos, &block),
         "redstone_torch" | "redstone_wall_torch" => refresh_torch(server, pos, &block),
         "repeater" => refresh_repeater(server, pos, &block),
+        "piston" | "sticky_piston" => refresh_piston(server, pos, &block),
         "redstone_lamp" => {
             let lit = incoming(server, pos) > 0;
             set_prop(server, pos, &block, "lit", lit);
@@ -258,6 +261,174 @@ fn refresh_openable(server: &Arc<Server>, pos: BlockPos, block: &Block) {
             }
         }
     }
+}
+
+/// Something stepped on or off a plate: press it, and arrange for it to
+/// come back up once whatever it was has gone.
+pub fn step_on(server: &Arc<Server>, pos: BlockPos) {
+    let Some(block) = block_at(server, pos) else { return };
+    if !short_name(&block.name).ends_with("_pressure_plate") {
+        return;
+    }
+    if block.props.get("powered").map(String::as_str) == Some("true") {
+        server.schedule_block(pos, 20); // keep it down while they stand there
+        return;
+    }
+    set_prop(server, pos, &block, "powered", true);
+    server.schedule_block(pos, 20);
+    update(server, pos);
+}
+
+/// A plate's turn to see whether anything is still on it.
+pub fn check_plate(server: &Arc<Server>, pos: BlockPos) {
+    let Some(block) = block_at(server, pos) else { return };
+    if !short_name(&block.name).ends_with("_pressure_plate") {
+        return;
+    }
+    if block.props.get("powered").map(String::as_str) != Some("true") {
+        return;
+    }
+    if standing_on(server, pos) {
+        server.schedule_block(pos, 20);
+        return;
+    }
+    set_prop(server, pos, &block, "powered", false);
+    update(server, pos);
+}
+
+/// Whether a player or a mob is on this block.
+fn standing_on(server: &Arc<Server>, pos: BlockPos) -> bool {
+    let on = |x: f64, y: f64, z: f64| {
+        x.floor() as i32 == pos.x && z.floor() as i32 == pos.z && (y - pos.y as f64).abs() < 1.0
+    };
+    if server.online_players().iter().any(|p| {
+        let s = p.lock();
+        !matches!(s.game_mode, garnet_protocol::packets::play::GameMode::Spectator) && on(s.x, s.y, s.z)
+    }) {
+        return true;
+    }
+    let entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
+    entities.by_id.values().any(|e| !e.is_item() && on(e.x, e.y, e.z))
+}
+
+/// How far a piston can shove, and what will not budge.
+const PUSH_LIMIT: usize = 12;
+
+fn immovable(server: &Arc<Server>, pos: BlockPos) -> bool {
+    let Some(block) = block_at(server, pos) else { return true };
+    let short = short_name(&block.name);
+    matches!(
+        short,
+        "obsidian" | "crying_obsidian" | "bedrock" | "barrier" | "reinforced_deepslate" | "end_portal_frame"
+            | "piston_head" | "moving_piston" | "respawn_anchor" | "enchanting_table" | "beacon" | "spawner"
+    ) || short.ends_with("_chest")
+        || short == "chest"
+        || short == "furnace"
+        || short == "blast_furnace"
+        || short == "smoker"
+        || short == "barrel"
+        || short.ends_with("shulker_box")
+}
+
+/// A piston follows its signal: out when it has one, back when it stops.
+fn refresh_piston(server: &Arc<Server>, pos: BlockPos, block: &Block) {
+    let facing = block.props.get("facing").cloned().unwrap_or_else(|| "north".to_owned());
+    let extended = block.props.get("extended").map(String::as_str) == Some("true");
+    // The block the head would occupy never counts as the signal's source.
+    let powered = incoming_except(server, pos, step(pos, &facing)) > 0;
+    if powered == extended {
+        return;
+    }
+    if powered {
+        extend(server, pos, block, &facing);
+    } else {
+        retract(server, pos, block, &facing);
+    }
+}
+
+/// Pushes whatever is in front out of the way and puts the head there.
+fn extend(server: &Arc<Server>, pos: BlockPos, block: &Block, facing: &str) {
+    let sticky = short_name(&block.name) == "sticky_piston";
+    let mut chain: Vec<(BlockPos, u32)> = Vec::new();
+    let mut at = step(pos, facing);
+    loop {
+        let Ok(state) = server.world().get_block(at) else { return };
+        if server.data.blocks.is_air(state as i32) {
+            break; // room to move into
+        }
+        if immovable(server, at) || chain.len() >= PUSH_LIMIT {
+            return; // nothing moves, and neither does the piston
+        }
+        chain.push((at, state));
+        at = step(at, facing);
+    }
+    // From the far end back, so nothing is overwritten on the way.
+    for (from, state) in chain.iter().rev() {
+        server.set_block(step(*from, facing), *state);
+    }
+    let air = server.data.blocks.default_state("air").unwrap_or(0) as u32;
+    if let Some((first, _)) = chain.first() {
+        server.set_block(*first, air);
+    }
+    let mut head = BTreeMap::new();
+    head.insert("facing".to_owned(), facing.to_owned());
+    head.insert("short".to_owned(), "false".to_owned());
+    head.insert("type".to_owned(), if sticky { "sticky" } else { "normal" }.to_owned());
+    if let Some(state) = server.data.blocks.state_with("minecraft:piston_head", &head) {
+        server.set_block(step(pos, facing), state as u32);
+    }
+    set_prop(server, pos, block, "extended", true);
+}
+
+/// Takes the head back, and with a sticky piston whatever it was holding.
+fn retract(server: &Arc<Server>, pos: BlockPos, block: &Block, facing: &str) {
+    let sticky = short_name(&block.name) == "sticky_piston";
+    let head = step(pos, facing);
+    let air = server.data.blocks.default_state("air").unwrap_or(0) as u32;
+    server.set_block(head, air);
+    if sticky {
+        // Read what is stuck to the head before touching the world again:
+        // set_block wants the same lock this read holds.
+        let stuck = step(head, facing);
+        let state = server.world().get_block(stuck).ok();
+        let movable = state
+            .filter(|state| !server.data.blocks.is_air(*state as i32))
+            .filter(|_| !immovable(server, stuck));
+        if let Some(state) = movable {
+            server.set_block(head, state);
+            server.set_block(stuck, air);
+        }
+    }
+    set_prop(server, pos, block, "extended", false);
+}
+
+/// One block along, in any of the six directions a piston can face.
+fn step(pos: BlockPos, facing: &str) -> BlockPos {
+    match facing {
+        "north" => pos.offset(0, 0, -1),
+        "south" => pos.offset(0, 0, 1),
+        "west" => pos.offset(-1, 0, 0),
+        "east" => pos.offset(1, 0, 0),
+        "up" => pos.offset(0, 1, 0),
+        _ => pos.offset(0, -1, 0),
+    }
+}
+
+/// The strongest signal reaching this spot, ignoring one neighbour.
+fn incoming_except(server: &Arc<Server>, pos: BlockPos, skip: BlockPos) -> i32 {
+    let mut best = 0;
+    for (dx, dy, dz) in ALL {
+        let side = pos.offset(dx, dy, dz);
+        if side == skip {
+            continue;
+        }
+        best = best.max(source_power(server, side, pos));
+        best = best.max(wire_power(server, side));
+        if block_is_powered(server, side) {
+            best = best.max(MAX_POWER);
+        }
+    }
+    best
 }
 
 /// The strongest signal reaching this spot from anywhere around it.

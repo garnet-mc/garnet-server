@@ -140,6 +140,12 @@ fn think(server: &Arc<Server>, tick: u64) {
         if let Some((gx, gz)) = goal {
             walk(server, mob.id, kind, gx, gz);
         }
+        if mob.on_ground {
+            crate::redstone::step_on(
+                server,
+                BlockPos::new(mob.x.floor() as i32, mob.y.floor() as i32, mob.z.floor() as i32),
+            );
+        }
         if attacked {
             let mut entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(stored) = entities.by_id.get_mut(&mob.id) {

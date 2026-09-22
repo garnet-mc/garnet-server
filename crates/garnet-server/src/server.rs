@@ -108,8 +108,18 @@ impl Server {
         self.config.read().unwrap_or_else(|e| e.into_inner())
     }
 
-    pub fn world(&self) -> std::sync::MutexGuard<'_, World> {
-        self.world.lock().unwrap_or_else(|e| e.into_inner())
+    /// The world, locked. The guard remembers that this thread holds it,
+    /// so a write attempted in the middle of a read is caught instead of
+    /// quietly waiting on itself.
+    pub fn world(&self) -> WorldGuard<'_> {
+        let inner = self.world.lock().unwrap_or_else(|e| e.into_inner());
+        WORLD_DEPTH.with(|depth| depth.set(depth.get() + 1));
+        WorldGuard { inner }
+    }
+
+    /// Whether this thread already has the world open.
+    fn reading_world() -> bool {
+        WORLD_DEPTH.with(|depth| depth.get() > 0)
     }
 
     pub fn current_tick(&self) -> u64 {
@@ -368,6 +378,20 @@ impl Server {
     }
 
     pub fn set_block(&self, pos: garnet_protocol::BlockPos, state: u32) -> bool {
+        // Writing while still holding a read would wait on this thread's
+        // own lock forever. Say which block it was rather than hanging.
+        debug_assert!(
+            !Self::reading_world(),
+            "set_block while this thread still holds the world"
+        );
+        if Self::reading_world() {
+            tracing::error!(
+                "set_block at {},{},{} while this thread still holds the world: read first, then write",
+                pos.x,
+                pos.y,
+                pos.z
+            );
+        }
         let changed = self.world().set_block(pos, state).unwrap_or(false);
         if changed {
             // This block, and the one above it, may now have nothing
@@ -745,4 +769,35 @@ pub fn generate_keys() -> Result<EncryptionKeys> {
     let private = rsa::RsaPrivateKey::new(&mut rng, 1024)?;
     let public_der = private.to_public_key().to_public_key_der()?.as_bytes().to_vec();
     Ok(EncryptionKeys { private, public_der })
+}
+
+
+thread_local! {
+    /// How many world guards this thread is holding.
+    static WORLD_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// A lock on the world that counts itself, so re-entrant writes are caught.
+pub struct WorldGuard<'a> {
+    inner: std::sync::MutexGuard<'a, World>,
+}
+
+impl std::ops::Deref for WorldGuard<'_> {
+    type Target = World;
+
+    fn deref(&self) -> &World {
+        &self.inner
+    }
+}
+
+impl std::ops::DerefMut for WorldGuard<'_> {
+    fn deref_mut(&mut self) -> &mut World {
+        &mut self.inner
+    }
+}
+
+impl Drop for WorldGuard<'_> {
+    fn drop(&mut self) {
+        WORLD_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
 }
