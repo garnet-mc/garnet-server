@@ -249,7 +249,7 @@ fn cmd_data(server: &Arc<Server>, sender: &CommandSender, args: &[String]) -> Re
                 Target::Player(p) => {
                     let s = p.lock();
                     format!(
-                        "{}: player at {:.2}, {:.2}, {:.2}, health {:.1}, food {}, level {}, mode {}, tags {:?}",
+                        "{}: player at {:.2}, {:.2}, {:.2}, health {:.1}, food {}, level {} ({:.0}%), mode {}, tags {:?}",
                         p.name(),
                         s.x,
                         s.y,
@@ -257,6 +257,7 @@ fn cmd_data(server: &Arc<Server>, sender: &CommandSender, args: &[String]) -> Re
                         s.health,
                         s.food,
                         s.xp_level,
+                        s.xp_progress * 100.0,
                         s.game_mode.name(),
                         s.tags
                     )

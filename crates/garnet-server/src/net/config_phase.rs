@@ -150,6 +150,7 @@ Join with the Garnet launcher and they install automatically:
         state.air = saved.air;
         state.fire_ticks = saved.fire_ticks;
         state.xp_level = saved.xp_level;
+        state.xp_progress = saved.xp_progress;
         state.xp_total = saved.xp_total;
         state.spawn_point = saved.spawn_point;
         state.tags = saved.tags.into_iter().collect();

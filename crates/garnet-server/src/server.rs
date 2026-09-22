@@ -549,6 +549,8 @@ impl Server {
             crate::blocks::tick(&self, tick);
             self.doing("explosions");
             crate::explosions::tick(&self);
+            self.doing("experience");
+            crate::experience::tick(&self);
             self.apply_mod_actions();
             self.tick_mods(tick);
 

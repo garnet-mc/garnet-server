@@ -148,6 +148,75 @@ impl PatchBuilder {
 
 /// Reads the enchantment levels out of a patch this server built (or a
 /// client patch that starts with them). `None` when there are none.
+/// The components of a patch this server wrote, in order. Returns None
+/// for a patch holding anything we cannot measure the length of, so a
+/// caller can leave such an item alone rather than mangle it.
+pub fn components_in(patch: &[u8]) -> Option<(Vec<(i32, Vec<u8>)>, Vec<i32>)> {
+    if patch.is_empty() {
+        return Some((Vec::new(), Vec::new()));
+    }
+    let mut r = PacketReader::new(patch);
+    let added = r.read_varint().ok()?;
+    let removed = r.read_varint().ok()?;
+    let mut out = Vec::new();
+    for _ in 0..added {
+        let id = r.read_varint().ok()?;
+        let before = r.remaining();
+        match id {
+            component::DAMAGE | component::MAX_STACK_SIZE => {
+                r.read_varint().ok()?;
+            }
+            component::UNBREAKABLE => {}
+            // A name is NBT, which we do not decode here; anything that
+            // carries one is left alone.
+            component::CUSTOM_NAME => return None,
+            component::ENCHANTMENTS => {
+                let n = r.read_varint().ok()?;
+                for _ in 0..n {
+                    r.read_varint().ok()?;
+                    r.read_varint().ok()?;
+                }
+            }
+            _ => return None, // something we did not write: leave it be
+        }
+        let after = r.remaining();
+        let taken = before - after;
+        out.push((id, patch[patch.len() - before..patch.len() - before + taken].to_vec()));
+    }
+    let mut dropped = Vec::new();
+    for _ in 0..removed {
+        dropped.push(r.read_varint().ok()?);
+    }
+    Some((out, dropped))
+}
+
+/// How damaged an item is, or None when it carries no damage.
+pub fn damage_in(patch: &[u8]) -> Option<i32> {
+    let (added, _) = components_in(patch)?;
+    let (_, data) = added.iter().find(|(id, _)| *id == component::DAMAGE)?;
+    PacketReader::new(data).read_varint().ok()
+}
+
+/// Rebuilds a patch with one component replaced or added.
+pub fn with_component(patch: &[u8], id: i32, data: Vec<u8>) -> Option<Vec<u8>> {
+    let (mut added, removed) = components_in(patch)?;
+    match added.iter_mut().find(|(existing, _)| *existing == id) {
+        Some(slot) => slot.1 = data,
+        None => added.push((id, data)),
+    }
+    let mut w = PacketWriter::new();
+    w.write_varint(added.len() as i32);
+    w.write_varint(removed.len() as i32);
+    for (id, data) in &added {
+        w.write_varint(*id);
+        w.write_bytes(data);
+    }
+    for id in &removed {
+        w.write_varint(*id);
+    }
+    Some(w.into_inner())
+}
+
 pub fn enchantments_in(patch: &[u8]) -> Option<Vec<(i32, i32)>> {
     let mut r = PacketReader::new(patch);
     let added = r.read_varint().ok()?;

@@ -1014,16 +1014,22 @@ fn cmd_xp(server: &Arc<Server>, sender: &CommandSender, args: &[String]) -> Resu
             }
             "add" | "set" => {
                 let amount: i32 = number(args.get(2), "amount")?;
-                let mut s = target.lock();
-                if levels {
-                    s.xp_level = if sub == "add" { s.xp_level + amount } else { amount }.max(0);
-                } else {
-                    s.xp_total = if sub == "add" { s.xp_total + amount } else { amount }.max(0);
-                    s.xp_level = level_for_points(s.xp_total);
+                if sub == "set" {
+                    let mut s = target.lock();
+                    s.xp_level = 0;
+                    s.xp_total = 0;
+                    s.xp_progress = 0.0;
                 }
-                let (level, total) = (s.xp_level, s.xp_total);
-                drop(s);
-                target.send(&cb::SetExperience { bar: 0.0, level, total });
+                if levels {
+                    let mut s = target.lock();
+                    s.xp_level = (s.xp_level + amount).max(0);
+                    s.xp_total = (0..s.xp_level).map(crate::experience::to_next_level).sum();
+                    drop(s);
+                    crate::experience::sync(&target);
+                } else {
+                    crate::experience::give(&target, amount);
+                }
+                let level = target.lock().xp_level;
                 sender.reply(Text::new(format!("{} now has {level} levels.", target.name())));
             }
             _ => return Err(usage.into()),

@@ -41,6 +41,8 @@ pub struct Entity {
     pub pickup_delay: u32,
     pub age: u32,
     pub no_gravity: bool,
+    /// What an experience orb is worth.
+    pub xp: i32,
     /// Ticks until this mob may swing again.
     pub attack_cooldown: u32,
     /// Set when the last move ran into something, so mobs know to hop.
@@ -210,6 +212,7 @@ pub fn new_entity(server: &Server, kind: &str, x: f64, y: f64, z: f64) -> Option
         pickup_delay: 0,
         age: 0,
         no_gravity: false,
+        xp: 0,
         attack_cooldown: 0,
         blocked_ahead: false,
         persistent: false,
@@ -241,7 +244,7 @@ fn show(player: &Player, entity: &Entity) {
         pitch: entity.pitch,
         yaw: entity.yaw,
         head_yaw: entity.yaw,
-        data: 0,
+        data: entity.xp,
     });
     if let Some(metadata) = metadata_packet(entity) {
         player.send(&metadata);

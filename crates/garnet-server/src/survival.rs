@@ -317,6 +317,7 @@ pub fn attack(server: &Arc<Server>, attacker: &Arc<Player>, target_id: i32, tick
     };
     let damage = weapon * charge + if sprinting && charge > 0.9 { 1.0 } else { 0.0 };
     attacker.lock().exhaustion += 0.1;
+    crate::durability::use_held(server, attacker, 1);
 
     // You can only hit what you can reach; the client has no business
     // swinging at something across the world.
@@ -378,6 +379,10 @@ fn damage_entity(server: &Arc<Server>, entity_id: i32, damage: f32, from: (f64, 
     server.broadcast_near(chunk, &cb::HurtAnimation { entity_id, yaw: 0.0 }, None);
     if dead {
         drop_loot(server, &kind, pos);
+        let worth = crate::experience::for_mob(&kind);
+        if worth > 0 {
+            crate::experience::drop_orbs(server, pos.0, pos.1 + 0.3, pos.2, worth);
+        }
         world_entities::despawn(server, entity_id);
     }
 }
@@ -452,6 +457,9 @@ pub fn hurt_by(
         left *= 1.0 - ((resistance.amplifier + 1) as f32 * 0.2).min(1.0);
     }
 
+    if left > 0.0 {
+        crate::durability::take_hit(server, player, left);
+    }
     let health = {
         let mut s = player.lock();
         s.health = (s.health - left).max(0.0);

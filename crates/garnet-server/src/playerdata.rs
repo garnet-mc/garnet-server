@@ -26,6 +26,7 @@ pub struct SavedPlayer {
     pub air: i32,
     pub fire_ticks: i32,
     pub xp_level: i32,
+    pub xp_progress: f32,
     pub xp_total: i32,
     pub spawn_point: Option<garnet_protocol::BlockPos>,
     pub tags: Vec<String>,
@@ -64,6 +65,7 @@ pub fn load(server: &Server, uuid: Uuid) -> Option<SavedPlayer> {
         air: root.get_i32("Air").unwrap_or(crate::survival::MAX_AIR),
         fire_ticks: root.get_i32("Fire").unwrap_or(0).max(0),
         xp_level: root.get_i32("XpLevel").unwrap_or(0),
+        xp_progress: root.get_f64("XpP").unwrap_or(0.0) as f32,
         xp_total: root.get_i32("XpTotal").unwrap_or(0),
         spawn_point: match (root.get_i32("SpawnX"), root.get_i32("SpawnY"), root.get_i32("SpawnZ")) {
             (Some(x), Some(y), Some(z)) => Some(garnet_protocol::BlockPos::new(x, y, z)),
@@ -144,6 +146,7 @@ pub fn save(server: &Server, player: &Player) {
     root.put("SelectedItemSlot", state.held_slot);
     root.put("UUID", uuid_to_ints(player.uuid));
     root.put("XpLevel", state.xp_level);
+    root.put("XpP", state.xp_progress);
     root.put("XpTotal", state.xp_total);
     if let Some(spawn) = state.spawn_point {
         root.put("SpawnX", spawn.x);

@@ -6,13 +6,15 @@ command set, block breaking and placing, sky and block lighting, item
 entities, health, hunger and combat, chests, crafting and furnaces,
 mobs that spawn, wander and fight back, doors, beds, falling blocks,
 growing crops, flowing water and lava, redstone from wire and torches
-through comparators, observers, pistons and TNT, hoppers, saves, mods,
-the admin panel, voice relaying and anti-cheat.
+through comparators, observers, pistons and TNT, hoppers, experience
+and tools that wear out, saves, mods, the admin panel, voice relaying
+and anti-cheat.
 
 What comes next, roughly in order:
 
 1. **The rest of the workbenches** – anvils, enchanting, brewing, the stonecutter and the grindstone (chests, the crafting grid and furnaces are done).
-2. **Rails and minecarts** – and the rest of what rides them (hoppers and the rest of redstone are done: wire, torches, levers, buttons, plates, repeaters, comparators, observers, pistons, dispensers, droppers, note blocks, lamps, doors and TNT).
+2. **Anvils, enchanting and brewing** – spending experience on gear (experience and durability are done)
+3. **Rails and minecarts** – and the rest of what rides them (hoppers and the rest of redstone are done: wire, torches, levers, buttons, plates, repeaters, comparators, observers, pistons, dispensers, droppers, note blocks, lamps, doors and TNT).
 3. **More mobs** – skeletons and creepers want arrows and explosions first, and everything wants proper pathfinding, sounds and experience orbs.
 4. **Vanilla-compatible terrain** – reproduce Mojang's noise generator from the datapack settings so seeds match.
 6. **Redstone**.

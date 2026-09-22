@@ -86,6 +86,8 @@ pub struct PlayerState {
     pub dimension: String,
     pub xp_level: i32,
     pub xp_total: i32,
+    /// How far along the current level the bar is, 0 to 1.
+    pub xp_progress: f32,
     /// Where /spawnpoint sent this player; the world spawn otherwise.
     pub spawn_point: Option<garnet_protocol::BlockPos>,
     pub tags: BTreeSet<String>,
@@ -189,6 +191,7 @@ impl Player {
                 dimension: "minecraft:overworld".into(),
                 xp_level: 0,
                 xp_total: 0,
+                xp_progress: 0.0,
                 spawn_point: None,
                 tags: BTreeSet::new(),
                 effects: Vec::new(),

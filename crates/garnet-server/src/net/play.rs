@@ -736,8 +736,22 @@ fn handle_dig(server: &Arc<Server>, player: &Arc<Player>, action: sb::PlayerActi
         crate::containers::spill(server, action.position, &broken);
         let air = server.data.blocks.default_state("air").unwrap_or(0) as u32;
         server.set_block(action.position, air);
-        crate::items::collect_drops(server, player, current, action.position);
-        crate::survival::mined(player);
+        // Swinging at air costs nothing: no drops, no hunger, no wear.
+        if !server.data.blocks.is_air(current as i32) {
+            crate::items::collect_drops(server, player, current, action.position);
+            crate::survival::mined(player);
+            crate::durability::use_held(server, player, 1);
+        }
+        let worth = crate::experience::for_block(&broken);
+        if worth > 0 && player.lock().game_mode != GameMode::Creative {
+            crate::experience::drop_orbs(
+                server,
+                action.position.x as f64 + 0.5,
+                action.position.y as f64 + 0.5,
+                action.position.z as f64 + 0.5,
+                worth,
+            );
+        }
         crate::blocks::changed(server, action.position);
     }
     done();
