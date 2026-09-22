@@ -92,7 +92,7 @@ Build with `cargo build --release --target wasm32-unknown-unknown`, put the `.wa
 
 ## Status
 
-Garnet is early. Players can join, see the world, move, chat, run commands and break blocks; mods, the panel, voice relay and anti-cheat work. Inventories, mobs, redstone, combat and vanilla terrain generation are on the roadmap ([docs/roadmap.md](docs/roadmap.md)).
+Garnet is early. Players can join, see the world, move, chat and break blocks; the vanilla command set ([docs/commands.md](docs/commands.md)), mods, the panel, voice relay and anti-cheat work. Inventories, mobs, redstone, combat and vanilla terrain generation are on the roadmap ([docs/roadmap.md](docs/roadmap.md)).
 
 ## License
 

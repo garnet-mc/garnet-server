@@ -354,15 +354,6 @@ impl GarnetConfig {
         }
         Ok(())
     }
-
-    pub fn difficulty_id(&self) -> u8 {
-        match self.world.difficulty.as_str() {
-            "peaceful" => 0,
-            "easy" => 1,
-            "hard" => 3,
-            _ => 2,
-        }
-    }
 }
 
 /// The file people see on first start. Kept in sync with the defaults above.

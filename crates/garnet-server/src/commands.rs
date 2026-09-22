@@ -20,6 +20,9 @@ pub enum CommandSender {
     Panel { username: String, replies: Arc<Mutex<Vec<String>>> },
     Rcon { replies: Arc<Mutex<Vec<String>>> },
     Mod { mod_id: String },
+    /// `/execute as <player>`: acts and stands as the player, but keeps the
+    /// permissions and receives the replies of whoever ran `/execute`.
+    As { player: Arc<Player>, origin: Box<CommandSender> },
 }
 
 impl CommandSender {
@@ -30,12 +33,13 @@ impl CommandSender {
             CommandSender::Panel { username, .. } => format!("panel:{username}"),
             CommandSender::Rcon { .. } => "Rcon".into(),
             CommandSender::Mod { mod_id } => format!("mod:{mod_id}"),
+            CommandSender::As { player, .. } => player.name().to_owned(),
         }
     }
 
     pub fn player(&self) -> Option<&Arc<Player>> {
         match self {
-            CommandSender::Player(p) => Some(p),
+            CommandSender::Player(p) | CommandSender::As { player: p, .. } => Some(p),
             _ => None,
         }
     }
@@ -50,6 +54,7 @@ impl CommandSender {
             CommandSender::Panel { replies, .. } | CommandSender::Rcon { replies } => {
                 replies.lock().unwrap_or_else(|e| e.into_inner()).push(text.to_plain());
             }
+            CommandSender::As { origin, .. } => origin.reply(text),
         }
     }
 
@@ -62,6 +67,7 @@ impl CommandSender {
     pub fn has_permission(&self, server: &Server, node: &str) -> bool {
         match self {
             CommandSender::Player(p) => server.has_permission(p.uuid, node),
+            CommandSender::As { origin, .. } => origin.has_permission(server, node),
             _ => true,
         }
     }
@@ -152,7 +158,12 @@ impl CommandRegistry {
             sender.reply_error("You do not have permission to use this command.");
             return;
         }
-        if !matches!(sender, CommandSender::Player(_)) || matches!(name.as_str(), "kick" | "ban" | "ban-ip" | "pardon" | "op" | "deop" | "stop" | "whitelist" | "gamemode" | "tp" | "time" | "save-all" | "mods") {
+        if !matches!(sender, CommandSender::Player(_)) || matches!(
+                name.as_str(),
+                "kick" | "ban" | "ban-ip" | "pardon" | "pardon-ip" | "op" | "deop" | "stop" | "whitelist" | "gamemode" | "defaultgamemode" | "tp" | "teleport"
+                    | "time" | "save-all" | "save-off" | "save-on" | "reload" | "mods" | "setblock" | "fill" | "clone" | "gamerule" | "difficulty" | "weather"
+                    | "worldborder" | "tick" | "kill" | "damage" | "effect" | "attribute" | "xp" | "experience" | "setworldspawn" | "transfer" | "execute"
+            ) {
             server.audit.record(&sender.name(), "command", line);
         }
         match command.handler {
@@ -250,7 +261,7 @@ pub fn register_builtins(registry: &CommandRegistry) {
     add("spawn", "Teleports you to spawn", "/spawn", cmd_spawn);
 }
 
-fn find_player(server: &Server, name: &str) -> Result<Arc<Player>, String> {
+pub(crate) fn find_player(server: &Server, name: &str) -> Result<Arc<Player>, String> {
     server.player_by_name(name).ok_or_else(|| format!("Player '{name}' is not online."))
 }
 

@@ -72,6 +72,10 @@ pub struct Server {
     pub mod_actions: Mutex<Vec<(String, Action)>>,
     pub scheduled: Mutex<Vec<ScheduledTask>>,
     pub commands: CommandRegistry,
+    /// Game rules, difficulty, weather, border, tick rate.
+    pub rules: RwLock<crate::rules::WorldRules>,
+    /// Scoreboard, teams and boss bars.
+    pub boards: Mutex<crate::boards::Boards>,
     pub voice: Option<VoiceServer>,
     pub panel: Mutex<Option<Panel>>,
     pub logs: LogSink,
@@ -258,6 +262,35 @@ impl Server {
         self.chunk_cache.lock().unwrap_or_else(|e| e.into_inner()).remove(&pos);
     }
 
+    /// After many blocks changed at once: drop the cached packet and make
+    /// every watcher fetch the chunk again on the next tick.
+    pub fn refresh_chunk(&self, pos: ChunkPos) {
+        self.invalidate_chunk(pos);
+        let watchers: Vec<Uuid> = self
+            .chunk_watchers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&pos)
+            .map(|set| set.iter().copied().collect())
+            .unwrap_or_default();
+        for uuid in watchers {
+            if let Some(player) = self.player(uuid) {
+                player.lock().loaded_chunks.remove(&pos);
+            }
+        }
+    }
+
+    /// Re-reads the ban, op and whitelist files and permissions from disk.
+    pub fn reload_lists(&self) -> anyhow::Result<()> {
+        let lists = crate::lists::Lists::load(&self.root)?;
+        self.lists.replace(lists);
+        let path = self.root.join("permissions.toml");
+        let text = std::fs::read_to_string(&path)?;
+        let permissions: garnet_api::Permissions = toml::from_str(&text).map_err(|e| anyhow::anyhow!("{} is invalid: {e}", path.display()))?;
+        *self.permissions.write().unwrap_or_else(|e| e.into_inner()) = permissions;
+        Ok(())
+    }
+
     /// Makes sure a chunk is loaded or on its way. Disk reads and terrain
     /// generation both run on worker threads; the chunk appears a tick later.
     pub fn request_chunk(self: &Arc<Self>, pos: ChunkPos) {
@@ -326,7 +359,11 @@ impl Server {
     }
 
     pub fn default_game_mode(&self) -> GameMode {
-        GameMode::parse(&self.config().world.gamemode).unwrap_or(GameMode::Survival)
+        let from_rules = self.rules.read().unwrap_or_else(|e| e.into_inner()).default_game_mode.clone();
+        from_rules
+            .and_then(|m| GameMode::parse(&m))
+            .or_else(|| GameMode::parse(&self.config().world.gamemode))
+            .unwrap_or(GameMode::Survival)
     }
 
     pub fn is_op(&self, uuid: Uuid) -> bool {
@@ -371,8 +408,12 @@ impl Server {
             let started = Instant::now();
             let tick = self.tick.fetch_add(1, Ordering::Relaxed) + 1;
 
-            self.tick_time(tick);
+            if !self.tick_world_paused() {
+                self.tick_time(tick);
+                self.tick_weather();
+            }
             self.tick_players(tick);
+            crate::vanilla_commands::tick_effects(&self, tick);
             self.apply_mod_actions();
             self.tick_mods(tick);
 
@@ -385,7 +426,9 @@ impl Server {
 
             if last_autosave.elapsed() >= autosave {
                 last_autosave = Instant::now();
-                self.save_everything("autosave");
+                if self.rules.read().unwrap_or_else(|e| e.into_inner()).autosave {
+                    self.save_everything("autosave");
+                }
             }
             if last_unload.elapsed() >= Duration::from_secs(15) {
                 last_unload = Instant::now();
@@ -411,6 +454,47 @@ impl Server {
                 tracing::warn!("tick {tick} took {elapsed:.0} ms");
             }
         }
+    }
+
+    /// `/tick freeze` stops the world clock and weather; `/tick step` lets
+    /// a few ticks through.
+    fn tick_world_paused(&self) -> bool {
+        let mut rules = self.rules.write().unwrap_or_else(|e| e.into_inner());
+        if !rules.tick.frozen {
+            return false;
+        }
+        if rules.tick.steps_left > 0 {
+            rules.tick.steps_left -= 1;
+            return false;
+        }
+        true
+    }
+
+    /// Weather runs out on its own like vanilla: rain for a while, then
+    /// clear for longer.
+    fn tick_weather(self: &Arc<Self>) {
+        let now_raining = {
+            let mut rules = self.rules.write().unwrap_or_else(|e| e.into_inner());
+            if !rules.game_rule_bool("doWeatherCycle") {
+                return;
+            }
+            if rules.weather.ticks_left <= 0 {
+                // Start a timer for the current weather.
+                rules.weather.ticks_left = if rules.weather.raining {
+                    rand::random_range(12_000..24_000)
+                } else {
+                    rand::random_range(12_000..180_000)
+                };
+                return;
+            }
+            rules.weather.ticks_left -= 1;
+            if rules.weather.ticks_left > 0 {
+                return;
+            }
+            rules.weather.raining
+        };
+        let thunder = !now_raining && rand::random::<f32>() < 0.25;
+        crate::vanilla_commands::set_weather(self, !now_raining, thunder, 0);
     }
 
     fn tick_time(&self, tick: u64) {

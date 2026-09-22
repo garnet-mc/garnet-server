@@ -139,11 +139,26 @@ Join with the Garnet launcher and they install automatically:
         view_distance,
     ));
     if let Some(saved) = saved {
+        let now = server.current_tick();
         let mut state = player.lock();
         state.yaw = saved.yaw;
         state.pitch = saved.pitch;
         state.health = saved.health;
         state.food = saved.food;
+        state.xp_level = saved.xp_level;
+        state.xp_total = saved.xp_total;
+        state.spawn_point = saved.spawn_point;
+        state.tags = saved.tags.into_iter().collect();
+        // Saved durations are ticks left; turn them back into end ticks.
+        state.effects = saved
+            .effects
+            .into_iter()
+            .map(|mut e| {
+                e.expires_tick = e.expires_tick.map(|left| now + left);
+                e
+            })
+            .collect();
+        state.attributes = saved.attributes.into_iter().collect();
     }
     if let Some(info) = &conn.client_info {
         player.lock().locale = info.locale.clone();

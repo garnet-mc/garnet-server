@@ -60,10 +60,11 @@ pub async fn on_join(server: &Arc<Server>, player: &Arc<Player>) {
         online_mode: config.server.online_mode,
         enforces_secure_chat: false,
     });
-    player.send(&cb::ChangeDifficulty {
-        difficulty: config.difficulty_id(),
-        locked: false,
-    });
+    let (difficulty, locked) = {
+        let rules = server.rules.read().unwrap_or_else(|e| e.into_inner());
+        (rules.difficulty_id(), rules.difficulty_locked)
+    };
+    player.send(&cb::ChangeDifficulty { difficulty, locked });
     player.send(&cb::PlayerAbilities::for_game_mode(game_mode));
     player.send(&cb::SetHeldSlot { slot: 0 });
     let op_level = server.lists.op_level(player.uuid);
@@ -129,11 +130,48 @@ pub async fn on_join(server: &Arc<Server>, player: &Arc<Player>) {
         food,
         saturation: 5.0,
     });
-    player.send(&cb::SetExperience {
-        bar: 0.0,
-        level: 0,
-        total: 0,
-    });
+    let (level, total) = {
+        let s = player.lock();
+        (s.xp_level, s.xp_total)
+    };
+    player.send(&cb::SetExperience { bar: 0.0, level, total });
+    let (effects, attributes) = {
+        let s = player.lock();
+        (s.effects.clone(), s.attributes.clone())
+    };
+    let now = server.current_tick();
+    for effect in effects {
+        player.send(&cb::UpdateMobEffect {
+            entity_id: player.entity_id,
+            effect: effect.id,
+            amplifier: effect.amplifier,
+            duration: effect.expires_tick.map(|t| t.saturating_sub(now) as i32).unwrap_or(-1),
+            ambient: false,
+            show_particles: effect.particles,
+            show_icon: true,
+        });
+    }
+    if !attributes.is_empty() {
+        let snapshots = attributes
+            .iter()
+            .filter_map(|(name, base)| {
+                Some(cb::AttributeSnapshot {
+                    attribute: server.data.registries.id_of("attribute", name)?,
+                    base: *base,
+                    modifiers: Vec::new(),
+                })
+            })
+            .collect();
+        player.send(&cb::UpdateAttributes {
+            entity_id: player.entity_id,
+            attributes: snapshots,
+        });
+    }
+    player.send(&crate::vanilla_commands::border_packet(server));
+    player.send(&crate::vanilla_commands::tick_packet(server));
+    player.send(&crate::vanilla_commands::game_rule_packet(server));
+    crate::vanilla_commands::send_weather(server, player);
+    crate::board_commands::send_boards(server, player);
 
     // Voice chat: hand the client its UDP secret over our plugin channel.
     if let Some(voice) = &server.voice {
@@ -707,11 +745,11 @@ fn respawn(server: &Arc<Server>, player: &Arc<Player>) {
             server.config().world.generator == "flat",
         )
     };
-    let game_mode = {
+    let (game_mode, spawn) = {
         let mut s = player.lock();
         s.health = 20.0;
         s.food = 20;
-        s.game_mode
+        (s.game_mode, s.spawn_point.unwrap_or(spawn))
     };
     player.send(&cb::Respawn {
         spawn: cb::SpawnInfo {

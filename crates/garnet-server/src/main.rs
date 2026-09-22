@@ -8,6 +8,8 @@ mod admin_bridge;
 mod anticheat;
 mod audit;
 mod backup;
+mod board_commands;
+mod boards;
 mod chunks;
 mod client_mods;
 mod commands;
@@ -20,7 +22,9 @@ mod net;
 mod player;
 mod playerdata;
 mod rcon;
+mod rules;
 mod server;
+mod vanilla_commands;
 
 use crate::config::GarnetConfig;
 use crate::server::Server;
@@ -129,6 +133,7 @@ async fn async_main(cli: Cli) -> Result<()> {
 
     let commands = commands::CommandRegistry::default();
     commands::register_builtins(&commands);
+    vanilla_commands::register(&commands);
 
     // The mod runtime needs a handle to the server and the server owns the
     // runtime, so the host is attached to the server right after it is built.
@@ -156,6 +161,8 @@ async fn async_main(cli: Cli) -> Result<()> {
             mod_actions: Mutex::new(Vec::new()),
             scheduled: Mutex::new(Vec::new()),
             commands,
+            rules: RwLock::new(rules::WorldRules::load(&root.join(&config.world.name), &config.world.difficulty)),
+            boards: Mutex::new(boards::Boards::load(&root.join(&config.world.name))),
             voice,
             panel: Mutex::new(None),
             logs: logs.clone(),

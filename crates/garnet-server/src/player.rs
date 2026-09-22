@@ -6,7 +6,7 @@ use bytes::Bytes;
 use garnet_data::GameData;
 use garnet_protocol::packets::play::GameMode;
 use garnet_protocol::{ChunkPos, ClientboundPacket, GameProfile, Text};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 use tokio::sync::mpsc;
@@ -68,6 +68,26 @@ pub struct PlayerState {
     /// How many chunks the client asked us to send per tick.
     pub chunks_per_tick: f32,
     pub dimension: String,
+    pub xp_level: i32,
+    pub xp_total: i32,
+    /// Where /spawnpoint sent this player; the world spawn otherwise.
+    pub spawn_point: Option<garnet_protocol::BlockPos>,
+    pub tags: BTreeSet<String>,
+    pub effects: Vec<ActiveEffect>,
+    /// Attribute base values changed with /attribute, by full name.
+    pub attributes: BTreeMap<String, f64>,
+}
+
+/// A potion effect given with /effect.
+#[derive(Clone, Debug)]
+pub struct ActiveEffect {
+    pub name: String,
+    /// Index into `minecraft:mob_effect`.
+    pub id: i32,
+    pub amplifier: i32,
+    /// Server tick when it ends; `None` is forever.
+    pub expires_tick: Option<u64>,
+    pub particles: bool,
 }
 
 impl PlayerState {
@@ -132,6 +152,12 @@ impl Player {
                 unacked_batches: 0,
                 chunks_per_tick: 8.0,
                 dimension: "minecraft:overworld".into(),
+                xp_level: 0,
+                xp_total: 0,
+                spawn_point: None,
+                tags: BTreeSet::new(),
+                effects: Vec::new(),
+                attributes: BTreeMap::new(),
             }),
         }
     }

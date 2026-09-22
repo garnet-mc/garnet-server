@@ -155,6 +155,12 @@ impl Lists {
     // ---- bans ----
 
     /// The active ban for a player, matched by UUID or (case-insensitive) name.
+    /// Swaps in freshly loaded lists (`/reload`).
+    pub fn replace(&self, other: Lists) {
+        let other = other.inner.into_inner().unwrap_or_else(|e| e.into_inner());
+        *self.write() = other;
+    }
+
     pub fn ban_for(&self, uuid: Uuid, name: &str) -> Option<PlayerBan> {
         self.read()
             .bans

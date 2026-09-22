@@ -13,6 +13,8 @@ use crate::text::Text;
 use crate::types::{BlockPos, GameProfile, Identifier};
 use uuid::Uuid;
 
+pub use super::clientbound_extra::*;
+
 /// Everything the client needs to know about the dimension it is entering.
 /// Shared by [`Login`] and [`Respawn`].
 #[derive(Clone, Debug)]
