@@ -22,16 +22,108 @@ struct Kind {
     speed: f64,
     damage: f32,
     hostile: bool,
+    /// How it fights: with its hands, with a bow, or by blowing up.
+    fights: Fight,
+    /// The undead catch fire in the morning.
+    burns_by_day: bool,
+}
+
+/// What a mob does when it gets to you.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Fight {
+    Melee,
+    /// Keeps its distance and shoots.
+    Bow,
+    /// Walks up and goes off, with this much force.
+    Blast,
+    None,
 }
 
 const KINDS: &[Kind] = &[
-    Kind { name: "zombie", health: 20.0, speed: 0.115, damage: 3.0, hostile: true },
-    Kind { name: "spider", health: 16.0, speed: 0.15, damage: 2.0, hostile: true },
-    Kind { name: "pig", health: 10.0, speed: 0.12, damage: 0.0, hostile: false },
-    Kind { name: "cow", health: 10.0, speed: 0.10, damage: 0.0, hostile: false },
-    Kind { name: "sheep", health: 8.0, speed: 0.10, damage: 0.0, hostile: false },
-    Kind { name: "chicken", health: 4.0, speed: 0.11, damage: 0.0, hostile: false },
+    Kind {
+        name: "zombie",
+        health: 20.0,
+        speed: 0.115,
+        damage: 3.0,
+        hostile: true,
+        fights: Fight::Melee,
+        burns_by_day: true,
+    },
+    Kind {
+        name: "skeleton",
+        health: 20.0,
+        speed: 0.12,
+        damage: 2.0,
+        hostile: true,
+        fights: Fight::Bow,
+        burns_by_day: true,
+    },
+    Kind {
+        name: "creeper",
+        health: 20.0,
+        speed: 0.12,
+        damage: 0.0,
+        hostile: true,
+        fights: Fight::Blast,
+        burns_by_day: false,
+    },
+    Kind {
+        name: "spider",
+        health: 16.0,
+        speed: 0.15,
+        damage: 2.0,
+        hostile: true,
+        fights: Fight::Melee,
+        burns_by_day: false,
+    },
+    Kind {
+        name: "pig",
+        health: 10.0,
+        speed: 0.12,
+        damage: 0.0,
+        hostile: false,
+        fights: Fight::None,
+        burns_by_day: false,
+    },
+    Kind {
+        name: "cow",
+        health: 10.0,
+        speed: 0.10,
+        damage: 0.0,
+        hostile: false,
+        fights: Fight::None,
+        burns_by_day: false,
+    },
+    Kind {
+        name: "sheep",
+        health: 8.0,
+        speed: 0.10,
+        damage: 0.0,
+        hostile: false,
+        fights: Fight::None,
+        burns_by_day: false,
+    },
+    Kind {
+        name: "chicken",
+        health: 4.0,
+        speed: 0.11,
+        damage: 0.0,
+        hostile: false,
+        fights: Fight::None,
+        burns_by_day: false,
+    },
 ];
+
+/// How close a creeper gets before it lights itself, and how long the
+/// fuse burns.
+const FUSE_RANGE: f64 = 3.0;
+const FUSE_TICKS: u32 = 30;
+/// How much of the world a creeper takes with it.
+const BLAST: f32 = 3.0;
+/// A skeleton keeps this far away, and shoots this often.
+const BOW_RANGE: f64 = 15.0;
+const KEEP_AWAY: f64 = 5.0;
+const SHOOT_EVERY: u32 = 40;
 
 /// How far a hostile mob notices a player from.
 const SIGHT: f64 = 16.0;
@@ -76,6 +168,9 @@ pub fn health_of(name: &str) -> f32 {
 
 pub fn tick(server: &Arc<Server>, tick: u64) {
     think(server, tick);
+    if tick % 20 == 0 {
+        burn_the_undead(server);
+    }
     if tick % 20 == 0 {
         let rules = server.rules.read().unwrap_or_else(|e| e.into_inner());
         let spawning = rules.game_rule_bool("doMobSpawning");
@@ -124,11 +219,28 @@ fn think(server: &Arc<Server>, tick: u64) {
         let mut attacked = false;
         if kind.hostile {
             if let Some((distance, _, (px, py, pz), player)) = &nearest {
-                if *distance <= SIGHT {
-                    goal = Some((*px, *pz));
-                    if *distance <= REACH && (py - mob.y).abs() < 2.5 {
-                        attacked = attack(server, &mob, kind, player);
+                match kind.fights {
+                    // A bow wants room: it closes to a comfortable range
+                    // and backs off if you get too near.
+                    Fight::Bow if *distance <= BOW_RANGE => {
+                        goal = match *distance < KEEP_AWAY {
+                            true => Some((mob.x * 2.0 - px, mob.z * 2.0 - pz)),
+                            false if *distance > KEEP_AWAY + 3.0 => Some((*px, *pz)),
+                            false => None,
+                        };
+                        attacked = shoot(server, &mob, (*px, *py, *pz));
                     }
+                    Fight::Blast if *distance <= SIGHT => {
+                        goal = Some((*px, *pz));
+                        fuse(server, &mob, *distance);
+                    }
+                    Fight::Melee if *distance <= SIGHT => {
+                        goal = Some((*px, *pz));
+                        if *distance <= REACH && (py - mob.y).abs() < 2.5 {
+                            attacked = attack(server, &mob, kind, player);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -149,7 +261,10 @@ fn think(server: &Arc<Server>, tick: u64) {
         if attacked {
             let mut entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(stored) = entities.by_id.get_mut(&mob.id) {
-                stored.attack_cooldown = ATTACK_EVERY;
+                stored.attack_cooldown = match kind.fights {
+                    Fight::Bow => SHOOT_EVERY,
+                    _ => ATTACK_EVERY,
+                };
             }
         } else {
             let mut entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
@@ -180,6 +295,113 @@ fn walk(server: &Arc<Server>, id: i32, kind: &Kind, gx: f64, gz: f64) {
     }
 }
 
+/// A skeleton looses an arrow, if it has waited long enough and can see
+/// where it is aiming. Returns whether it shot.
+fn shoot(server: &Arc<Server>, mob: &Entity, at: (f64, f64, f64)) -> bool {
+    if mob.attack_cooldown > 0 {
+        return false;
+    }
+    let difficulty = server.rules.read().unwrap_or_else(|e| e.into_inner()).difficulty_id();
+    if difficulty == 0 {
+        return false;
+    }
+    let from = (mob.x, mob.y + 1.4, mob.z);
+    // Vanilla aims a third of the way up the body, not at the eyes, and
+    // lets the arc do the rest.
+    let body = (at.0, at.1 + 0.6, at.2);
+    if !can_see(server, from, (at.0, at.1 + 1.4, at.2)) {
+        return false;
+    }
+    // The easier the game, the wilder the shot.
+    let spread = match difficulty {
+        1 => 0.16,
+        3 => 0.04,
+        _ => 0.10,
+    };
+    crate::projectiles::mob_shoots(server, from, body, mob.id, spread);
+    true
+}
+
+/// Whether there is clear air between two points.
+fn can_see(server: &Arc<Server>, from: (f64, f64, f64), to: (f64, f64, f64)) -> bool {
+    let line = (to.0 - from.0, to.1 - from.1, to.2 - from.2);
+    let length = (line.0 * line.0 + line.1 * line.1 + line.2 * line.2).sqrt();
+    if length < 0.001 {
+        return true;
+    }
+    let mut travelled = 0.5;
+    while travelled < length - 0.5 {
+        let share = travelled / length;
+        let at = (from.0 + line.0 * share, from.1 + line.1 * share, from.2 + line.2 * share);
+        let pos = BlockPos::new(at.0.floor() as i32, at.1.floor() as i32, at.2.floor() as i32);
+        let state = server.world().get_block(pos).unwrap_or(0);
+        if !server.data.blocks.is_air(state as i32) && !server.data.blocks.is_liquid(state as i32) {
+            return false;
+        }
+        travelled += 0.5;
+    }
+    true
+}
+
+/// A creeper close enough to a player lights itself, and goes off when the
+/// fuse runs out. Walking away puts it out again.
+fn fuse(server: &Arc<Server>, mob: &Entity, distance: f64) {
+    let difficulty = server.rules.read().unwrap_or_else(|e| e.into_inner()).difficulty_id();
+    if difficulty == 0 {
+        return;
+    }
+    let lit = {
+        let mut entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(stored) = entities.by_id.get_mut(&mob.id) else {
+            return;
+        };
+        if distance > FUSE_RANGE + 1.0 {
+            stored.fuse = 0;
+            return;
+        }
+        if distance > FUSE_RANGE {
+            return; // close, but not yet
+        }
+        if stored.fuse == 0 {
+            stored.fuse = FUSE_TICKS;
+            false
+        } else {
+            stored.fuse -= 1;
+            stored.fuse == 0
+        }
+    };
+    if mob.fuse == 0 {
+        hiss(server, mob);
+    }
+    if lit {
+        crate::explosions::explode(server, mob.x, mob.y, mob.z, BLAST);
+        world_entities::despawn(server, mob.id);
+    }
+}
+
+/// The sound everyone learns to dread.
+fn hiss(server: &Arc<Server>, mob: &Entity) {
+    let Some(name) = garnet_protocol::Identifier::parse("minecraft:entity.creeper.primed") else {
+        return;
+    };
+    let registry_id = server.data.registries.id_of("sound_event", &name.to_string());
+    server.broadcast_near(
+        garnet_protocol::ChunkPos::from_block(mob.x.floor() as i32, mob.z.floor() as i32),
+        &garnet_protocol::packets::play::clientbound::Sound {
+            name,
+            registry_id,
+            source: garnet_protocol::packets::play::clientbound::SoundSource::Hostile,
+            x: mob.x,
+            y: mob.y,
+            z: mob.z,
+            volume: 1.0,
+            pitch: 0.5,
+            seed: rand::random(),
+        },
+        None,
+    );
+}
+
 /// A mob hits a player. Returns whether the blow landed.
 fn attack(server: &Arc<Server>, mob: &Entity, kind: &Kind, player: &Arc<crate::player::Player>) -> bool {
     if mob.attack_cooldown > 0 || kind.damage <= 0.0 {
@@ -200,6 +422,55 @@ fn attack(server: &Arc<Server>, mob: &Entity, kind: &Kind, player: &Arc<crate::p
         Some((mob.x, mob.z)),
         Some(kind.name.to_owned()),
     );
+    true
+}
+
+/// Morning comes for the undead: anything standing in open daylight
+/// catches fire and burns down.
+fn burn_the_undead(server: &Arc<Server>) {
+    let daylight = {
+        let time = server.world().settings.time_of_day % 24000;
+        let raining = server.rules.read().unwrap_or_else(|e| e.into_inner()).weather.raining;
+        // Vanilla's daylight, near enough: the hours either side of noon.
+        (1000..12000).contains(&time) && !raining
+    };
+    if !daylight {
+        return;
+    }
+    let undead: Vec<(i32, f64, f64, f64)> = {
+        let entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
+        entities
+            .by_id
+            .values()
+            .filter(|entity| kind_of(&entity.kind).is_some_and(|kind| kind.burns_by_day) && entity.health > 0.0)
+            .map(|entity| (entity.id, entity.x, entity.y, entity.z))
+            .collect()
+    };
+    for (id, x, y, z) in undead {
+        let caught = under_open_sky(server, x, y, z);
+        world_entities::set_burning(server, id, caught);
+        if caught {
+            crate::survival::damage_entity_directly(server, id, 1.0, (x, z));
+        }
+    }
+}
+
+/// Whether the sky above a spot is clear all the way up.
+fn under_open_sky(server: &Arc<Server>, x: f64, y: f64, z: f64) -> bool {
+    let (bx, bz) = (x.floor() as i32, z.floor() as i32);
+    let head = y.floor() as i32 + 1;
+    let mut world = server.world();
+    let blocks = &server.data.blocks;
+    for above in head..=319 {
+        let Ok(state) = world.get_block(BlockPos::new(bx, above, bz)) else {
+            return false;
+        };
+        if blocks.is_air(state as i32) {
+            continue;
+        }
+        // Water counts: a zombie standing in it is safe from the sun.
+        return false;
+    }
     true
 }
 

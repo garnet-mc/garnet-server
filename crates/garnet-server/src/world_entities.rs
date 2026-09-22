@@ -51,6 +51,10 @@ pub struct Entity {
     pub persistent: bool,
     /// Set for arrows and anything else in flight; see `projectiles`.
     pub projectile: Option<crate::projectiles::Projectile>,
+    /// Ticks left on a creeper's fuse; zero when it is not lit.
+    pub fuse: u32,
+    /// Alight, and shown that way to everyone watching.
+    pub burning: bool,
 }
 
 impl Entity {
@@ -219,6 +223,8 @@ pub fn new_entity(server: &Server, kind: &str, x: f64, y: f64, z: f64) -> Option
         blocked_ahead: false,
         persistent: false,
         projectile: None,
+        fuse: 0,
+        burning: false,
     })
 }
 
@@ -266,8 +272,30 @@ fn show(player: &Player, entity: &Entity) {
 }
 
 /// Metadata: custom name, and the item for item entities.
+/// Sets whether an entity is alight, and tells everyone watching.
+pub fn set_burning(server: &Arc<Server>, id: i32, burning: bool) {
+    let entity = {
+        let mut entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(stored) = entities.by_id.get_mut(&id) else { return };
+        if stored.burning == burning {
+            return;
+        }
+        stored.burning = burning;
+        stored.clone()
+    };
+    let packet = cb::SetEntityData {
+        entity_id: id,
+        // The shared flags byte; the lowest bit is "on fire".
+        entries: vec![(0, 0, vec![if burning { 0x01 } else { 0x00 }])],
+    };
+    server.broadcast_near(entity.chunk(), &packet, None);
+}
+
 pub fn metadata_packet(entity: &Entity) -> Option<cb::SetEntityData> {
     let mut entries: Vec<(u8, i32, Vec<u8>)> = Vec::new();
+    if entity.burning {
+        entries.push((0, 0, vec![0x01]));
+    }
     if let Some(name) = &entity.custom_name {
         let mut w = PacketWriter::new();
         w.write_bool(true);

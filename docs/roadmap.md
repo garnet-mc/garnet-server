@@ -8,12 +8,13 @@ mobs that spawn, wander and fight back, doors, beds, falling blocks,
 growing crops, flowing water and lava, redstone from wire and torches
 through comparators, observers, pistons and TNT, hoppers, experience
 and tools that wear out, anvils, enchanting tables and brewing stands,
-bows and the rest of what flies, saves, mods, the admin panel, voice
-relaying and anti-cheat.
+bows and the rest of what flies, skeletons, creepers and a dawn that
+burns the undead, saves, mods, the admin panel, voice relaying and
+anti-cheat.
 
 What comes next, roughly in order:
 
-1. **Mobs that fight back properly** – skeletons with bows, creepers that go off, and pathfinding for all of them (arrows, thrown potions, ender pearls, snowballs and eggs fly now; crossbows, tridents and dispensers that shoot them do not).
+1. **Pathfinding** – mobs walk straight at you and hop what is in the way; they should find their way round it, and stop walking off cliffs (skeletons shoot, creepers go off and the undead burn at dawn; crossbows, tridents and dispensers that shoot do not).
 2. **The rest of the workbenches** – the stonecutter, the grindstone and the smithing table (chests, the crafting grid, furnaces, anvils, enchanting tables and brewing stands are done).
 3. **Rails and minecarts** – and the rest of what rides them (hoppers and the rest of redstone are done: wire, torches, levers, buttons, plates, repeaters, comparators, observers, pistons, dispensers, droppers, note blocks, lamps, doors and TNT).
 3. **More mobs** – skeletons and creepers want arrows and explosions first, and everything wants proper pathfinding, sounds and experience orbs.

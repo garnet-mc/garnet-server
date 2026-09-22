@@ -168,6 +168,42 @@ fn take_arrow(server: &Arc<Server>, player: &Arc<Player>) -> Option<ItemStack> {
     Some(taken)
 }
 
+/// A mob looses an arrow at something, the way a skeleton does: not
+/// quite straight, and less straight the easier the difficulty.
+pub fn mob_shoots(server: &Arc<Server>, from: (f64, f64, f64), at: (f64, f64, f64), owner: i32, spread: f64) {
+    let (dx, dy, dz) = (at.0 - from.0, at.1 - from.1, at.2 - from.2);
+    let flat = (dx * dx + dz * dz).sqrt();
+    if flat < 0.01 {
+        return;
+    }
+    // Aim a little high, as vanilla does, so the arrow drops onto them.
+    let aim = (dx, dy + flat * 0.2, dz);
+    let length = (aim.0 * aim.0 + aim.1 * aim.1 + aim.2 * aim.2).sqrt();
+    let wobble = || (rand::random::<f64>() - rand::random::<f64>()) * spread;
+    let speed = 1.6;
+    let velocity = (
+        aim.0 / length * speed + wobble(),
+        aim.1 / length * speed + wobble(),
+        aim.2 / length * speed + wobble(),
+    );
+    let Some(mut entity) = world_entities::new_entity(server, "minecraft:arrow", from.0, from.1, from.2) else {
+        return;
+    };
+    entity.velocity = velocity;
+    entity.no_gravity = true;
+    entity.projectile = Some(Projectile {
+        owner: Some(owner),
+        damage: 2.0,
+        knockback: 1.0,
+        gravity: gravity_of("arrow"),
+        // What a skeleton shoots can be gathered up afterwards, which is
+        // what makes a skeleton worth standing in front of.
+        pickup: crate::items::item_id(server, "minecraft:arrow").map(|id| ItemStack::new(id, 1)),
+        ..Projectile::default()
+    });
+    world_entities::spawn(server, entity);
+}
+
 /// Puts one thing in flight, aimed where the player is looking.
 fn launch(server: &Arc<Server>, player: &Arc<Player>, kind: &str, speed: f64, lob: f32, mut shot: Projectile) -> Option<i32> {
     let (x, y, z, yaw, pitch, id, uuid) = {
@@ -246,10 +282,13 @@ pub fn step(server: &Arc<Server>, mut entity: Entity) {
     // Anything it passes through on the way is hit first.
     if let Some(victim) = first_entity_hit(server, &entity, from, to) {
         strike(server, &entity, &shot, victim);
-        if !land(server, &mut entity, &mut shot, None) {
-            world_entities::despawn(server, id);
-            return;
+        // Whatever hits someone is spent: an arrow in a body is gone, and
+        // a potion breaks against them.
+        if entity.kind.ends_with("potion") {
+            splash(server, &entity, &shot);
         }
+        world_entities::despawn(server, id);
+        return;
     } else if let Some(block) = first_block_hit(server, from, to) {
         if !land(server, &mut entity, &mut shot, Some(block)) {
             world_entities::despawn(server, id);
