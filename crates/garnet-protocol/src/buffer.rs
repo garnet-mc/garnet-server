@@ -160,12 +160,15 @@ impl PacketWriter {
         self.write_nbt(&text.to_nbt());
     }
 
-    /// A bit set is a VarInt number of longs followed by the longs.
+    /// A bit set is sent the way `java.util.BitSet.toByteArray()` lays it
+    /// out: a VarInt length and little-endian bytes, trailing zero bytes
+    /// dropped. (Older versions sent longs; 26.x sends bytes.)
     pub fn write_bitset(&mut self, bits: &[u64]) {
-        self.write_varint(bits.len() as i32);
-        for word in bits {
-            self.write_u64(*word);
+        let mut bytes: Vec<u8> = bits.iter().flat_map(|w| w.to_le_bytes()).collect();
+        while bytes.last() == Some(&0) {
+            bytes.pop();
         }
+        self.write_byte_array(&bytes);
     }
 
     /// Angle in steps of 1/256 of a full turn.
@@ -384,7 +387,15 @@ impl<'a> PacketReader<'a> {
     }
 
     pub fn read_bitset(&mut self) -> Result<Vec<u64>> {
-        self.read_list(|r| r.read_u64())
+        let bytes = self.read_byte_array()?;
+        Ok(bytes
+            .chunks(8)
+            .map(|c| {
+                let mut word = [0u8; 8];
+                word[..c.len()].copy_from_slice(c);
+                u64::from_le_bytes(word)
+            })
+            .collect())
     }
 }
 
@@ -401,6 +412,21 @@ mod tests {
             let mut r = PacketReader::new(w.as_slice());
             assert_eq!(r.read_varint().unwrap(), v);
         }
+    }
+
+    #[test]
+    fn bitset_matches_java_layout() {
+        // 26 sections + 2 = bits 0..=25 set: BitSet.toByteArray() gives
+        // ff ff ff 03, so the wire form is 04 ff ff ff 03.
+        let mut w = PacketWriter::new();
+        w.write_bitset(&[0x03ff_ffff]);
+        assert_eq!(w.as_slice(), &[4, 0xff, 0xff, 0xff, 0x03]);
+        let mut r = PacketReader::new(w.as_slice());
+        assert_eq!(r.read_bitset().unwrap(), vec![0x03ff_ffff]);
+
+        let mut w = PacketWriter::new();
+        w.write_bitset(&[]);
+        assert_eq!(w.as_slice(), &[0]);
     }
 
     #[test]
