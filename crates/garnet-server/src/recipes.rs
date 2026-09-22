@@ -12,14 +12,14 @@ use serde_json::Value;
 
 /// One slot of a recipe: what may go in it.
 #[derive(Debug, Clone)]
-enum Ingredient {
+pub enum Ingredient {
     Item(String),
     Tag(String),
     AnyOf(Vec<Ingredient>),
 }
 
 impl Ingredient {
-    fn parse(value: &Value) -> Option<Ingredient> {
+    pub fn parse(value: &Value) -> Option<Ingredient> {
         match value {
             Value::String(s) => Some(match s.strip_prefix('#') {
                 Some(tag) => Ingredient::Tag(with_namespace(tag)),
@@ -39,7 +39,7 @@ impl Ingredient {
         }
     }
 
-    fn matches(&self, data: &GameData, item: &str) -> bool {
+    pub fn matches(&self, data: &GameData, item: &str) -> bool {
         match self {
             Ingredient::Item(name) => name == item,
             Ingredient::Tag(tag) => in_tag(data, tag, item),

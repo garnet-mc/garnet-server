@@ -10,6 +10,7 @@ mod audit;
 mod anvil;
 mod backup;
 mod blocks;
+mod brewing;
 mod board_commands;
 mod boards;
 mod chunks;
@@ -36,6 +37,7 @@ mod mod_host;
 mod mobs;
 mod net;
 mod player;
+mod potions;
 mod playerdata;
 mod rcon;
 mod recipes;
@@ -187,6 +189,8 @@ async fn async_main(cli: Cli) -> Result<()> {
             loot: loot::LootTables::new(&data),
             recipes: recipes::Recipes::load(&data),
             enchantments: enchanting::Enchantments::load(&data),
+            brewing: brewing::Brewing::load(&data),
+            stands: brewing::Stands::new(),
             mob_loot: loot::LootTables::entities(&data),
             furnaces: furnaces::Furnaces::new(),
             block_ticks: Mutex::new(Vec::new()),

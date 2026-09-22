@@ -21,6 +21,11 @@ pub struct ItemDefaults {
     pub max_stack_size: i32,
     /// The item or `#tag` that mends it on an anvil, if any.
     pub repairable: Option<String>,
+    /// What is left in the hand after it is eaten or drunk, if anything.
+    pub use_remainder: Option<String>,
+    /// What it is worth as brewing fuel: how many brews, and how fast.
+    /// The two names point into the game's provider registries.
+    pub brewing_fuel: Option<(String, String)>,
 }
 
 #[derive(Debug, Default)]
@@ -71,6 +76,15 @@ impl ItemComponents {
                         .and_then(|c| c.get("items"))
                         .and_then(Value::as_str)
                         .map(str::to_owned),
+                    use_remainder: components
+                        .get("minecraft:use_remainder")
+                        .and_then(|c| c.get("id"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    brewing_fuel: components.get("minecraft:brewing_fuel").map(|fuel| {
+                        let text = |key: &str| fuel.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
+                        (text("uses"), text("speed_multiplier"))
+                    }),
                 },
             );
         }
@@ -97,6 +111,18 @@ impl ItemComponents {
 
     pub fn repairable(&self, item: &str) -> Option<&str> {
         self.get(item).and_then(|d| d.repairable.as_deref())
+    }
+
+    pub fn use_remainder(&self, item: &str) -> Option<&str> {
+        self.get(item).and_then(|d| d.use_remainder.as_deref())
+    }
+
+    /// The provider names for how many brews this item fuels and how fast,
+    /// or None when it is not brewing fuel at all.
+    pub fn brewing_fuel(&self, item: &str) -> Option<(&str, &str)> {
+        self.get(item)
+            .and_then(|d| d.brewing_fuel.as_ref())
+            .map(|(uses, speed)| (uses.as_str(), speed.as_str()))
     }
 
     pub fn is_empty(&self) -> bool {

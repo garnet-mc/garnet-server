@@ -36,6 +36,8 @@ pub enum Kind {
     Crafting,
     /// In the block, but ticked whether or not anyone is watching.
     Furnace,
+    /// In the block, like a furnace, but three bottles at once.
+    Brewing,
     /// On the player: two things to join and what they would make.
     Anvil,
     /// On the player: something to enchant and the lapis to pay with.
@@ -72,6 +74,9 @@ pub fn open(server: &Arc<Server>, player: &Arc<Player>, pos: BlockPos, block: &s
     }
     if block == "minecraft:enchanting_table" {
         return crate::enchanting::open(server, player, pos);
+    }
+    if block == "minecraft:brewing_stand" {
+        return crate::brewing::open(server, player, pos);
     }
     let Some((size, menu, title)) = container_size(block) else {
         return false;
@@ -211,6 +216,7 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
         Kind::Block => read_items(server, open.pos, open.size),
         Kind::Crafting => player.lock().crafting.clone(),
         Kind::Furnace => crate::furnaces::state(server, open.pos).items,
+        Kind::Brewing => crate::brewing::state(server, open.pos).items,
         Kind::Anvil => player.lock().anvil.clone(),
         Kind::Enchanting => player.lock().enchanting.clone(),
     };
@@ -246,6 +252,7 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
         Kind::Block => write_items(server, open.pos, block_items),
         Kind::Crafting => player.lock().crafting = block_items.to_vec(),
         Kind::Furnace => crate::furnaces::touched(server, open.pos, block_items.to_vec()),
+        Kind::Brewing => crate::brewing::touched(server, open.pos, block_items.to_vec()),
         Kind::Anvil => player.lock().anvil = block_items.to_vec(),
         Kind::Enchanting => player.lock().enchanting = block_items.to_vec(),
     }

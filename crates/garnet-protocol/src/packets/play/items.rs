@@ -22,6 +22,8 @@ pub mod component {
     pub const LORE: i32 = 11;
     pub const ENCHANTMENTS: i32 = 13;
     pub const REPAIR_COST: i32 = 19;
+    /// What is in a bottle: which potion, and anything added to it.
+    pub const POTION_CONTENTS: i32 = 53;
     /// What an enchanted book carries, as opposed to what it is enchanted
     /// with: a book's own enchantments do nothing until an anvil moves them
     /// onto something.
@@ -119,6 +121,19 @@ impl PatchBuilder {
         self
     }
 
+    /// What is in a bottle. Vanilla's shape: the potion itself, then a
+    /// colour, extra effects and a name, none of which we add.
+    pub fn potion(mut self, potion: i32) -> Self {
+        let mut w = PacketWriter::new();
+        w.write_bool(true);
+        w.write_varint(potion);
+        w.write_bool(false); // no colour of its own
+        w.write_varint(0); // no effects beyond the potion's own
+        w.write_bool(false); // no name of its own
+        self.added.push((component::POTION_CONTENTS, w.into_inner()));
+        self
+    }
+
     pub fn custom_name(mut self, name: &Text) -> Self {
         let mut w = PacketWriter::new();
         w.write_text(name);
@@ -189,6 +204,20 @@ pub fn components_in(patch: &[u8]) -> Option<(Vec<(i32, Vec<u8>)>, Vec<i32>)> {
             component::CUSTOM_NAME => {
                 r.read_nbt().ok()?;
             }
+            component::POTION_CONTENTS => {
+                if r.read_bool().ok()? {
+                    r.read_varint().ok()?;
+                }
+                if r.read_bool().ok()? {
+                    r.read_i32().ok()?;
+                }
+                if r.read_varint().ok()? != 0 {
+                    return None; // effects of its own: we cannot measure those
+                }
+                if r.read_bool().ok()? {
+                    r.read_string().ok()?;
+                }
+            }
             component::ENCHANTMENTS | component::STORED_ENCHANTMENTS => {
                 let n = r.read_varint().ok()?;
                 for _ in 0..n {
@@ -245,6 +274,14 @@ pub fn with_component(patch: &[u8], id: i32, data: Vec<u8>) -> Option<Vec<u8>> {
 
 pub fn enchantments_in(patch: &[u8]) -> Option<Vec<(i32, i32)>> {
     enchantment_list_in(patch, component::ENCHANTMENTS)
+}
+
+/// Which potion is in a bottle, by its id in `minecraft:potion`.
+pub fn potion_in(patch: &[u8]) -> Option<i32> {
+    let (added, _) = components_in(patch)?;
+    let (_, data) = added.iter().find(|(id, _)| *id == component::POTION_CONTENTS)?;
+    let mut r = PacketReader::new(data);
+    r.read_bool().ok()?.then(|| r.read_varint().ok()).flatten()
 }
 
 /// What an enchanted book is holding, which is not the same as what it is

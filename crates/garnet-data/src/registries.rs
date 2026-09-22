@@ -70,6 +70,11 @@ impl Registries {
         self.get(registry)?.id_of(name)
     }
 
+    /// Shorthand the other way: what entry `id` of `registry` is called.
+    pub fn name_of(&self, registry: &str, id: i32) -> Option<&str> {
+        self.get(registry)?.name_of(id)
+    }
+
     pub fn len(&self) -> usize {
         self.map.len()
     }

@@ -86,6 +86,10 @@ pub struct Server {
     pub mob_loot: crate::loot::LootTables,
     /// The furnaces that are currently burning.
     pub furnaces: crate::furnaces::Furnaces,
+    /// What a brewing stand can make of what is in it.
+    pub brewing: crate::brewing::Brewing,
+    /// The brewing stands that are currently working.
+    pub stands: crate::brewing::Stands,
     /// Blocks waiting for their turn: a button to pop out, sand to fall.
     pub block_ticks: Mutex<Vec<(garnet_protocol::BlockPos, u64)>>,
     /// Lit fuses, and the tick each one runs out.
@@ -381,6 +385,7 @@ impl Server {
             }
             crate::world_entities::load_chunk(&server, pos);
             crate::furnaces::load_chunk(&server, pos);
+            crate::brewing::load_chunk(&server, pos);
             crate::hoppers::load_chunk(&server, pos);
             server.generating.lock().unwrap_or_else(|e| e.into_inner()).remove(&pos);
         });
@@ -547,6 +552,8 @@ impl Server {
             crate::mobs::tick(&self, tick);
             self.doing("furnaces");
             crate::furnaces::tick(&self);
+            self.doing("brewing");
+            crate::brewing::tick(&self);
             self.doing("blocks");
             crate::blocks::tick(&self, tick);
             self.doing("explosions");
@@ -770,6 +777,7 @@ impl Server {
         }
         crate::world_entities::save_all(self);
         crate::furnaces::save_all(self);
+        crate::brewing::save_all(self);
         tracing::info!("{why}: saved {chunks} chunks in {} ms", started.elapsed().as_millis());
     }
 

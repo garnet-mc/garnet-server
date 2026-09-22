@@ -367,7 +367,14 @@ pub async fn handle(server: &Arc<Server>, player: &Arc<Player>, name: &str, r: &
             handle_use_item_on(server, player, p);
         }
         "use_item" => {
-            let _ = sb::UseItem::read(r)?;
+            let p = sb::UseItem::read(r)?;
+            // The client sends where it was looking, which is what a bottle
+            // held out at water is aimed with.
+            {
+                let mut s = player.lock();
+                s.yaw = p.yaw;
+                s.pitch = p.pitch;
+            }
             crate::survival::start_using(server, player, server.current_tick());
         }
         "punch" => {

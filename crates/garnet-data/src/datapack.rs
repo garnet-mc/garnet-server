@@ -116,7 +116,9 @@ pub fn extract_datapack(inner_jar: &Path, target_dir: &Path) -> Result<()> {
         // recipes are what players craft with.
         let is_block_loot = after_ns.starts_with("/loot_table/blocks/") || after_ns.starts_with("/loot_table/entities/");
         let is_recipe = after_ns.starts_with("/recipe/");
-        if !is_tag && !is_registry && !is_block_loot && !is_recipe {
+        // Brewing fuel points at these for how many brews it is worth.
+        let is_provider = after_ns.starts_with("/context_int_provider/") || after_ns.starts_with("/context_float_provider/");
+        if !is_tag && !is_registry && !is_block_loot && !is_recipe && !is_provider {
             continue;
         }
         let out_path = target_dir.join(name.trim_start_matches("data/"));

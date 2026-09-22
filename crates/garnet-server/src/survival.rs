@@ -177,7 +177,7 @@ fn hunger(server: &Arc<Server>, player: &Arc<Player>, tick: u64) {
     }
 }
 
-/// Finishes a meal that has been going long enough.
+/// Finishes a meal or a drink that has been going long enough.
 fn eating(server: &Arc<Server>, player: &Arc<Player>, tick: u64) {
     let since = player.lock().eating_since;
     let Some(started) = since else { return };
@@ -194,6 +194,10 @@ fn eating(server: &Arc<Server>, player: &Arc<Player>, tick: u64) {
         return;
     }
     let name = crate::items::item_name(server, held.item);
+    if crate::potions::is_drink(&name) {
+        crate::potions::drink(server, player, &held);
+        return;
+    }
     let Some((food, saturation)) = food_value(&name) else { return };
     {
         let mut s = player.lock();
@@ -221,10 +225,18 @@ pub fn start_using(server: &Arc<Server>, player: &Arc<Player>, tick: u64) {
         return;
     }
     let name = crate::items::item_name(server, held.item);
-    let Some((_, _)) = food_value(&name) else { return };
-    // A full player can still eat a golden apple, nothing else.
-    if food >= 20 && !name.contains("golden_apple") {
+    // An empty bottle held out at water fills with it instead.
+    if name == "minecraft:glass_bottle" {
+        crate::potions::fill_bottle(server, player);
         return;
+    }
+    // A drink is never turned down, however full the player is.
+    if !crate::potions::is_drink(&name) {
+        let Some((_, _)) = food_value(&name) else { return };
+        // A full player can still eat a golden apple, nothing else.
+        if food >= 20 && !name.contains("golden_apple") {
+            return;
+        }
     }
     player.lock().eating_since = Some(tick);
 }
@@ -550,6 +562,20 @@ pub fn respawned(server: &Arc<Server>, player: &Arc<Player>) {
 }
 
 /// Tells the client what its hearts and hunger bar should look like.
+/// Puts health back, up to whatever this player's maximum is.
+pub fn heal(server: &Arc<Server>, player: &Arc<Player>, amount: f32) {
+    let _ = server;
+    {
+        let mut s = player.lock();
+        let max = max_health(&s);
+        if s.health >= max {
+            return;
+        }
+        s.health = (s.health + amount).min(max);
+    }
+    sync(player);
+}
+
 pub fn sync(player: &Arc<Player>) {
     let (health, food, saturation) = {
         let s = player.lock();
