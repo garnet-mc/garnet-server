@@ -97,12 +97,9 @@ const NOT_YET: &[(&str, &str)] = &[
     ("loot", "loot tables"),
     ("recipe", "recipes"),
     ("advancement", "advancements"),
-    ("summon", "mobs and entities"),
-    ("ride", "mobs and entities"),
     ("locate", "structures"),
     ("place", "structures"),
     ("fillbiome", "biome editing"),
-    ("data", "block and entity data"),
     ("debug", "the profiler"),
     ("jfr", "the profiler"),
     ("perf", "the profiler"),
@@ -1057,13 +1054,18 @@ fn level_for_points(points: i32) -> i32 {
 
 fn cmd_kill(server: &Arc<Server>, sender: &CommandSender, args: &[String]) -> Result<(), String> {
     let targets = match args.first() {
-        Some(t) => resolve_targets(server, sender, t)?,
-        None => sender.player().cloned().map(|p| vec![p]).ok_or("Say who to kill.")?,
+        Some(t) => crate::entity_commands::resolve_entities(server, sender, t)?,
+        None => sender
+            .player()
+            .cloned()
+            .map(|p| vec![crate::entity_commands::Target::Player(p)])
+            .ok_or("Say who to kill.")?,
     };
-    for target in targets {
-        kill_player(server, &target, Text::new(format!("{} was killed", target.name())));
-        sender.reply(Text::new(format!("Killed {}.", target.name())));
+    let count = crate::entity_commands::kill_targets(server, sender, targets);
+    if count == 0 {
+        return Err("Nothing matched.".into());
     }
+    sender.reply(Text::new(format!("Killed {count} entit{}.", if count == 1 { "y" } else { "ies" })));
     Ok(())
 }
 

@@ -581,6 +581,38 @@ impl ClientboundPacket for GameRuleValues {
     }
 }
 
+/// Who rides what. An empty list means everyone got off.
+pub struct SetPassengers {
+    pub vehicle: i32,
+    pub passengers: Vec<i32>,
+}
+
+impl ClientboundPacket for SetPassengers {
+    const NAME: &'static str = "set_passengers";
+    const STATE: State = State::Play;
+    fn write(&self, w: &mut PacketWriter) {
+        w.write_varint(self.vehicle);
+        w.write_list(&self.passengers, |w, p| w.write_varint(*p));
+    }
+}
+
+/// The pickup animation: an item flies into a player.
+pub struct TakeItemEntity {
+    pub item_id: i32,
+    pub player_id: i32,
+    pub amount: i32,
+}
+
+impl ClientboundPacket for TakeItemEntity {
+    const NAME: &'static str = "take_item_entity";
+    const STATE: State = State::Play;
+    fn write(&self, w: &mut PacketWriter) {
+        w.write_varint(self.item_id);
+        w.write_varint(self.player_id);
+        w.write_varint(self.amount);
+    }
+}
+
 pub struct PlayerCombatKill {
     pub player_id: i32,
     pub message: Text,

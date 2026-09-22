@@ -58,13 +58,19 @@ pub fn handle_click(server: &Server, player: &Player, click: &ContainerClick) {
     sync_inventory(player);
 }
 
-pub fn handle_creative_slot(player: &Player, slot: i16, stack: ItemStack) {
+pub fn handle_creative_slot(server: &Arc<Server>, player: &Arc<Player>, slot: i16, stack: ItemStack) {
     if player.lock().game_mode != GameMode::Creative {
         sync_inventory(player);
         return;
     }
     if slot < 0 {
-        return; // thrown out: item entities are not here yet
+        // Thrown out of the inventory screen.
+        let (yaw, pitch, x, y, z) = {
+            let s = player.lock();
+            (s.yaw, s.pitch, s.x, s.y, s.z)
+        };
+        throw_from(server, stack, yaw, pitch, x, y, z);
+        return;
     }
     let mut state = player.lock();
     state.inventory.set(slot as usize, stack);
@@ -82,7 +88,7 @@ pub fn swap_hands(player: &Player) {
 // ---- breaking ----
 
 /// Gives the player whatever the broken block drops (survival only).
-pub fn collect_drops(server: &Arc<Server>, player: &Arc<Player>, state: u32) {
+pub fn collect_drops(server: &Arc<Server>, player: &Arc<Player>, state: u32, pos: BlockPos) {
     let (mode, held) = {
         let s = player.lock();
         (s.game_mode, s.inventory.held(s.held_slot).clone())
@@ -110,13 +116,47 @@ pub fn collect_drops(server: &Arc<Server>, player: &Arc<Player>, state: u32) {
     if drops.is_empty() {
         return;
     }
+    let _ = player;
     for (name, count) in drops {
         if let Some(id) = item_id(server, &name) {
-            let limit = max_stack(server, id);
-            player.lock().inventory.add(ItemStack::new(id, count), limit);
+            let (dx, dz) = ((rand::random::<f64>() - 0.5) * 0.1, (rand::random::<f64>() - 0.5) * 0.1);
+            crate::world_entities::drop_item(server, ItemStack::new(id, count), pos.x as f64 + 0.5, pos.y as f64 + 0.3, pos.z as f64 + 0.5, (dx, 0.15, dz), 10);
         }
     }
+}
+
+/// Throws items out of the player's hand (Q): one, or the whole stack.
+pub fn throw_held(server: &Arc<Server>, player: &Arc<Player>, whole_stack: bool) {
+    let (stack, yaw, pitch, x, y, z) = {
+        let mut s = player.lock();
+        let held_slot = s.held_slot;
+        let slot = s.inventory.held_mut(held_slot);
+        if slot.is_empty() {
+            return;
+        }
+        let count = if whole_stack { slot.count } else { 1 };
+        let thrown = ItemStack {
+            item: slot.item,
+            count,
+            patch: slot.patch.clone(),
+        };
+        slot.count -= count;
+        if slot.count <= 0 {
+            *slot = ItemStack::EMPTY;
+        }
+        (thrown, s.yaw, s.pitch, s.x, s.y, s.z)
+    };
     sync_inventory(player);
+    throw_from(server, stack, yaw, pitch, x, y, z);
+}
+
+/// Sends a stack flying the way the player looks, as vanilla does.
+pub fn throw_from(server: &Arc<Server>, stack: ItemStack, yaw: f32, pitch: f32, x: f64, y: f64, z: f64) {
+    let (yaw, pitch) = (yaw.to_radians() as f64, pitch.to_radians() as f64);
+    let vx = -yaw.sin() * pitch.cos() * 0.3;
+    let vy = -pitch.sin() * 0.3 + 0.1;
+    let vz = yaw.cos() * pitch.cos() * 0.3;
+    crate::world_entities::drop_item(server, stack, x, y + 1.3, z, (vx, vy, vz), 40);
 }
 
 /// Vanilla's "requires correct tool for drops": blocks in `mineable/pickaxe`

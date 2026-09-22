@@ -1,5 +1,6 @@
 //! World backups: a zip of the world folder in `backups/`, oldest pruned.
 
+use std::sync::Arc;
 use crate::server::Server;
 use anyhow::{Context, Result};
 use garnet_admin::api::BackupInfo;
@@ -11,7 +12,7 @@ pub fn backup_dir(server: &Server) -> PathBuf {
 }
 
 /// Saves the world, then zips it. Blocking; run it on the blocking pool.
-pub fn create(server: &Server, source: &str) -> Result<PathBuf> {
+pub fn create(server: &Arc<Server>, source: &str) -> Result<PathBuf> {
     server.save_everything("backup");
     let dir = backup_dir(server);
     std::fs::create_dir_all(&dir)?;

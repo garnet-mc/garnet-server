@@ -78,6 +78,8 @@ pub struct Server {
     pub boards: Mutex<crate::boards::Boards>,
     /// Block drop tables.
     pub loot: crate::loot::LootTables,
+    /// Items on the ground, mobs and other non-player entities.
+    pub entities: Mutex<crate::world_entities::Entities>,
     pub voice: Option<VoiceServer>,
     pub panel: Mutex<Option<Panel>>,
     pub logs: LogSink,
@@ -342,6 +344,7 @@ impl Server {
                 Some(chunk) => server.world().insert_loaded_chunk(chunk),
                 None => server.world().insert_chunk(generator.generate(pos, range)),
             }
+            crate::world_entities::load_chunk(&server, pos);
             server.generating.lock().unwrap_or_else(|e| e.into_inner()).remove(&pos);
         });
     }
@@ -420,6 +423,7 @@ impl Server {
             self.tick_light();
             crate::vanilla_commands::tick_effects(&self, tick);
             crate::functions::tick(&self, tick);
+            crate::world_entities::tick(&self);
             self.apply_mod_actions();
             self.tick_mods(tick);
 
@@ -569,6 +573,7 @@ impl Server {
             crate::chunks::stream_chunks(self, &player, server_view);
             if tick % 10 == 0 {
                 crate::entities::update_visibility(self, &player);
+                crate::world_entities::update_visibility(self, &player);
             }
             if let Some(voice) = &self.voice {
                 if tick % 4 == 0 {
@@ -622,7 +627,7 @@ impl Server {
         }
     }
 
-    pub fn save_everything(&self, why: &str) {
+    pub fn save_everything(self: &Arc<Self>, why: &str) {
         let started = Instant::now();
         let chunks = match self.world().save() {
             Ok(n) => n,
@@ -634,10 +639,11 @@ impl Server {
         for player in self.online_players() {
             crate::playerdata::save(self, &player);
         }
+        crate::world_entities::save_all(self);
         tracing::info!("{why}: saved {chunks} chunks in {} ms", started.elapsed().as_millis());
     }
 
-    fn unload_unwatched_chunks(&self, idle: Duration) {
+    fn unload_unwatched_chunks(self: &Arc<Self>, idle: Duration) {
         let keep: HashSet<ChunkPos> = self
             .chunk_watchers
             .lock()
@@ -657,6 +663,7 @@ impl Server {
             cache.retain(|pos, _| keep.contains(pos));
             tracing::debug!("unloaded {unloaded} idle chunks");
         }
+        crate::world_entities::unload_unwatched(self);
     }
 
     pub fn memory_mb() -> u64 {

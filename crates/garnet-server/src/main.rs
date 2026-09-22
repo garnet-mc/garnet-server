@@ -15,6 +15,7 @@ mod client_mods;
 mod commands;
 mod config;
 mod entities;
+mod entity_commands;
 mod functions;
 mod inventory;
 mod items;
@@ -29,6 +30,7 @@ mod rcon;
 mod rules;
 mod server;
 mod vanilla_commands;
+mod world_entities;
 
 use crate::config::GarnetConfig;
 use crate::server::Server;
@@ -139,6 +141,7 @@ async fn async_main(cli: Cli) -> Result<()> {
     commands::register_builtins(&commands);
     vanilla_commands::register(&commands);
     functions::register(&commands);
+    entity_commands::register(&commands);
 
     // The mod runtime needs a handle to the server and the server owns the
     // runtime, so the host is attached to the server right after it is built.
@@ -168,6 +171,7 @@ async fn async_main(cli: Cli) -> Result<()> {
             commands,
             rules: RwLock::new(rules::WorldRules::load(&root.join(&config.world.name), &config.world.difficulty)),
             loot: loot::LootTables::new(&data),
+            entities: Mutex::new(world_entities::Entities::new(&root.join(&config.world.name))),
             boards: Mutex::new(boards::Boards::load(&root.join(&config.world.name))),
             voice,
             panel: Mutex::new(None),

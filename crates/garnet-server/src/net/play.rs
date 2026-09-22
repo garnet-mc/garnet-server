@@ -387,7 +387,7 @@ pub async fn handle(server: &Arc<Server>, player: &Arc<Player>, name: &str, r: &
         }
         "set_creative_mode_slot" => {
             let p = sb::SetCreativeModeSlot::read(r)?;
-            crate::items::handle_creative_slot(player, p.slot, p.item);
+            crate::items::handle_creative_slot(server, player, p.slot, p.item);
         }
         "container_click" => {
             let p = sb::ContainerClick::read(r)?;
@@ -658,8 +658,7 @@ fn handle_dig(server: &Arc<Server>, player: &Arc<Player>, action: sb::PlayerActi
             return;
         }
         DropItem | DropItemStack => {
-            // Item entities are not here yet: the item stays in the inventory.
-            crate::items::sync_inventory(player);
+            crate::items::throw_held(server, player, action.status == DropItemStack);
             return;
         }
         _ => {}
@@ -713,7 +712,7 @@ fn handle_dig(server: &Arc<Server>, player: &Arc<Player>, action: sb::PlayerActi
     } else {
         let air = server.data.blocks.default_state("air").unwrap_or(0) as u32;
         server.set_block(action.position, air);
-        crate::items::collect_drops(server, player, current);
+        crate::items::collect_drops(server, player, current, action.position);
     }
     done();
 }
