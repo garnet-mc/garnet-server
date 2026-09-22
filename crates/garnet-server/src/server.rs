@@ -413,6 +413,7 @@ impl Server {
                 self.tick_weather();
             }
             self.tick_players(tick);
+            self.tick_light();
             crate::vanilla_commands::tick_effects(&self, tick);
             self.apply_mod_actions();
             self.tick_mods(tick);
@@ -452,6 +453,19 @@ impl Server {
             times.push_back(elapsed);
             if elapsed > 100.0 {
                 tracing::warn!("tick {tick} took {elapsed:.0} ms");
+            }
+        }
+    }
+
+    /// Recomputes light where blocks changed and sends the new light to
+    /// everyone who has those chunks.
+    fn tick_light(&self) {
+        let changed = self.world().flush_light();
+        for pos in changed {
+            self.invalidate_chunk(pos);
+            let packet = self.world().light_packet(pos);
+            if let Some(packet) = packet {
+                self.broadcast_near(pos, &packet, None);
             }
         }
     }

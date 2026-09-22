@@ -317,6 +317,23 @@ impl ClientboundPacket for ChunkData {
     }
 }
 
+/// Fresh light for a chunk the client already has.
+pub struct LightUpdate {
+    pub chunk_x: i32,
+    pub chunk_z: i32,
+    pub light: LightData,
+}
+
+impl ClientboundPacket for LightUpdate {
+    const NAME: &'static str = "light_update";
+    const STATE: State = State::Play;
+    fn write(&self, w: &mut PacketWriter) {
+        w.write_varint(self.chunk_x);
+        w.write_varint(self.chunk_z);
+        self.light.write(w);
+    }
+}
+
 pub struct UnloadChunk {
     pub chunk_x: i32,
     pub chunk_z: i32,

@@ -57,8 +57,50 @@ pub fn encode_chunk(chunk: &mut Chunk, ctx: &EncodeContext) -> ChunkData {
         ],
         sections: sections.into_inner(),
         block_entities: Vec::new(),
-        light: full_bright_light(chunk.sections.len()),
+        light: light_data(chunk),
     }
+}
+
+/// The light packet fields for a chunk; also used by `light_update`.
+pub fn light_data(chunk: &Chunk) -> LightData {
+    let sections = chunk.sections.len();
+    let Some(light) = &chunk.light else {
+        return full_bright_light(sections);
+    };
+    // Mask bit 0 is the section below the world, bit n+1 is section n, and
+    // the last bit is the section above the world (always full sky light).
+    let mut data = LightData::default();
+    let mut sky_mask = vec![0u64; (sections + 2).div_ceil(64)];
+    let mut block_mask = sky_mask.clone();
+    let mut empty_sky = sky_mask.clone();
+    let mut empty_block = sky_mask.clone();
+    let set = |mask: &mut Vec<u64>, bit: usize| mask[bit / 64] |= 1 << (bit % 64);
+    set(&mut empty_sky, 0);
+    set(&mut empty_block, 0);
+    for i in 0..sections {
+        match &light.sky[i] {
+            Some(bytes) => {
+                set(&mut sky_mask, i + 1);
+                data.sky_arrays.push(bytes.to_vec());
+            }
+            None => set(&mut empty_sky, i + 1),
+        }
+        match &light.block[i] {
+            Some(bytes) => {
+                set(&mut block_mask, i + 1);
+                data.block_arrays.push(bytes.to_vec());
+            }
+            None => set(&mut empty_block, i + 1),
+        }
+    }
+    set(&mut sky_mask, sections + 1);
+    data.sky_arrays.push(vec![0xFF; 2048]);
+    set(&mut empty_block, sections + 1);
+    data.sky_mask = sky_mask;
+    data.block_mask = block_mask;
+    data.empty_sky_mask = empty_sky;
+    data.empty_block_mask = empty_block;
+    data
 }
 
 fn encode_section(section: &mut ChunkSection, ctx: &EncodeContext, w: &mut PacketWriter) {
@@ -174,8 +216,8 @@ pub fn pack_heightmap(heights: &[u32; 256], world_height: i32) -> Vec<i64> {
         .collect()
 }
 
-/// Sky light 15 everywhere and no block light. Simple and good enough until
-/// real light propagation lands; the client still darkens at night.
+/// Sky light 15 everywhere and no block light: what a chunk gets before its
+/// light has been computed.
 fn full_bright_light(section_count: usize) -> LightData {
     // One bit per section plus one below and one above the world.
     let mask_bits = section_count + 2;

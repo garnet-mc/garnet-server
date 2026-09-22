@@ -279,6 +279,34 @@ pub fn chunk_from_nbt(root: &NbtCompound, pos: ChunkPos, range: HeightRange, ctx
         chunk.block_entities = entities.iter().filter_map(|t| t.as_compound().cloned()).collect();
     }
 
+    // Light, if this chunk was saved with it (vanilla layout: 2048 bytes per section).
+    if root.get_bool("isLightOn") == Some(true) {
+        let mut light = crate::light::ChunkLight::empty(chunk.sections.len());
+        let mut any = false;
+        for section_tag in root.get_list("sections").unwrap_or(&[]) {
+            let Some(section) = section_tag.as_compound() else { continue };
+            let index = section.get_i32("Y").unwrap_or(i32::MIN) - range.min_section();
+            if index < 0 || index as usize >= chunk.sections.len() {
+                continue;
+            }
+            for (key, layer) in [("SkyLight", &mut light.sky), ("BlockLight", &mut light.block)] {
+                if let Some(NbtTag::ByteArray(bytes)) = section.get(key) {
+                    if bytes.len() == crate::light::SECTION_LIGHT_BYTES {
+                        let mut data = Box::new([0u8; crate::light::SECTION_LIGHT_BYTES]);
+                        for (d, b) in data.iter_mut().zip(bytes) {
+                            *d = *b as u8;
+                        }
+                        layer[index as usize] = Some(data);
+                        any = true;
+                    }
+                }
+            }
+        }
+        if any {
+            chunk.light = Some(light);
+        }
+    }
+
     // Keep everything else (structures, ticks, heightmaps...) so re-saving
     // the chunk never throws away data we do not understand yet.
     let mut extra = root.clone();
@@ -384,6 +412,7 @@ pub fn chunk_to_nbt(chunk: &mut Chunk, ctx: &AnvilContext) -> NbtCompound {
     root.put("zPos", chunk.pos.z);
     root.put("yPos", chunk.range.min_section());
     root.put("Status", "minecraft:full");
+    root.put("isLightOn", chunk.light.is_some());
 
     let mut sections = Vec::with_capacity(chunk.sections.len());
     for (i, section) in chunk.sections.iter().enumerate() {
@@ -447,6 +476,14 @@ pub fn chunk_to_nbt(chunk: &mut Chunk, ctx: &AnvilContext) -> NbtCompound {
             biomes.put("data", pack(biome_indices.iter().copied(), BIOME_VOLUME, bits));
         }
         tag.put("biomes", biomes);
+        if let Some(light) = &chunk.light {
+            if let Some(sky) = &light.sky[i] {
+                tag.put("SkyLight", NbtTag::ByteArray(sky.iter().map(|b| *b as i8).collect()));
+            }
+            if let Some(block) = &light.block[i] {
+                tag.put("BlockLight", NbtTag::ByteArray(block.iter().map(|b| *b as i8).collect()));
+            }
+        }
         sections.push(NbtTag::Compound(tag));
     }
     root.put("sections", sections);

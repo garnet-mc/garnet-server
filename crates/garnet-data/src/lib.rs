@@ -16,6 +16,7 @@ pub mod blocks;
 pub mod datapack;
 pub mod generator;
 pub mod java;
+pub mod light;
 pub mod mojang;
 pub mod registries;
 
@@ -56,6 +57,8 @@ pub struct GameData {
     pub registries: Registries,
     pub dynamic: DynamicRegistries,
     pub tags: Tags,
+    /// Light given off and blocked by each block state.
+    pub light: light::LightTable,
     /// Where this version's files live (jar, reports, extracted data).
     pub version_dir: PathBuf,
 }
@@ -106,6 +109,7 @@ impl GameData {
             tags.registries.len()
         );
 
+        let light = light::LightTable::build(&blocks);
         Ok(Self {
             version: version_id.to_owned(),
             protocol_version,
@@ -114,6 +118,7 @@ impl GameData {
             blocks,
             registries,
             dynamic,
+            light,
             tags,
             version_dir: version_dir.to_owned(),
         })

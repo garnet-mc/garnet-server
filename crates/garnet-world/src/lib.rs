@@ -12,6 +12,7 @@ pub mod chunk;
 pub mod compat;
 pub mod encode;
 pub mod generator;
+pub mod light;
 pub mod world;
 
 pub use chunk::{Chunk, ChunkSection};

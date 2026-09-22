@@ -137,6 +137,8 @@ pub struct Chunk {
     /// Chunk-level NBT we loaded but do not interpret (structures, ticks...).
     /// Written back unchanged so nothing is lost across a load/save cycle.
     pub extra: NbtCompound,
+    /// Sky and block light; `None` until computed (see `light.rs`).
+    pub light: Option<crate::light::ChunkLight>,
 }
 
 impl Chunk {
@@ -150,6 +152,7 @@ impl Chunk {
             dirty: false,
             block_entities: Vec::new(),
             extra: NbtCompound::new(),
+            light: None,
         }
     }
 

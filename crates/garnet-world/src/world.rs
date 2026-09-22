@@ -5,6 +5,7 @@ use crate::anvil::{self, AnvilContext, RegionStore};
 use crate::chunk::Chunk;
 use crate::encode::{encode_chunk, EncodeContext};
 use crate::generator::{Biomes, Blocks, FlatGenerator, NoiseGenerator, WorldGenerator};
+use crate::light;
 use crate::HeightRange;
 use anyhow::{Context, Result};
 use garnet_data::GameData;
@@ -61,6 +62,8 @@ pub struct World {
     /// `level.dat` tags we do not interpret, preserved on save.
     level_extra: NbtCompound,
     pub air_state: u32,
+    /// Chunks whose light must be recomputed before they are sent again.
+    light_dirty: HashSet<ChunkPos>,
 }
 
 impl World {
@@ -95,6 +98,7 @@ impl World {
             regions: Arc::new(RegionStore::new(save_dir.join("region"))),
             level_extra,
             air_state: blocks.air,
+            light_dirty: HashSet::new(),
         };
         if !level_path.exists() {
             world.pick_spawn();
@@ -160,8 +164,105 @@ impl World {
                 chunk.dirty = chunk.extra.is_empty();
             }
             self.chunks.insert(pos, chunk);
+            self.light_arrived(pos);
         }
         Ok(self.chunks.get_mut(&pos).unwrap())
+    }
+
+    // ---- light ----
+
+    /// The four side neighbours of a chunk, when loaded.
+    fn neighbours(&self, pos: ChunkPos) -> light::Neighbours<'_> {
+        light::Neighbours {
+            sides: [
+                self.chunks.get(&ChunkPos::new(pos.x - 1, pos.z)),
+                self.chunks.get(&ChunkPos::new(pos.x + 1, pos.z)),
+                self.chunks.get(&ChunkPos::new(pos.x, pos.z - 1)),
+                self.chunks.get(&ChunkPos::new(pos.x, pos.z + 1)),
+            ],
+        }
+    }
+
+    /// Computes light for a chunk that just arrived (unless it came with
+    /// light from disk) and lets its neighbours pick up light from it.
+    fn light_arrived(&mut self, pos: ChunkPos) {
+        let has_light = self.chunks.get(&pos).map(|c| c.light.is_some()).unwrap_or(true);
+        if !has_light {
+            self.recompute_light(pos);
+        }
+        for side in [ChunkPos::new(pos.x - 1, pos.z), ChunkPos::new(pos.x + 1, pos.z), ChunkPos::new(pos.x, pos.z - 1), ChunkPos::new(pos.x, pos.z + 1)] {
+            if self.chunks.contains_key(&side) {
+                self.light_dirty.insert(side);
+            }
+        }
+    }
+
+    /// Recomputes one chunk's light; `true` when it changed.
+    fn recompute_light(&mut self, pos: ChunkPos) -> bool {
+        let Some(mut chunk) = self.chunks.remove(&pos) else { return false };
+        let before = chunk.light.clone();
+        light::compute(&mut chunk, &self.data.light, &self.neighbours(pos));
+        let changed = before.as_ref() != chunk.light.as_ref();
+        if changed {
+            chunk.dirty = true;
+        }
+        self.chunks.insert(pos, chunk);
+        changed
+    }
+
+    /// A block at `pos` changed in a way that affects light: this chunk,
+    /// and any neighbour within reach of the change, need a recompute.
+    fn light_touched(&mut self, pos: BlockPos) {
+        let chunk = pos.chunk();
+        self.light_dirty.insert(chunk);
+        let lx = pos.x & 15;
+        let lz = pos.z & 15;
+        if lx < 15 {
+            self.light_dirty.insert(ChunkPos::new(chunk.x - 1, chunk.z));
+        }
+        if lx > 0 {
+            self.light_dirty.insert(ChunkPos::new(chunk.x + 1, chunk.z));
+        }
+        if lz < 15 {
+            self.light_dirty.insert(ChunkPos::new(chunk.x, chunk.z - 1));
+        }
+        if lz > 0 {
+            self.light_dirty.insert(ChunkPos::new(chunk.x, chunk.z + 1));
+        }
+    }
+
+    /// Recomputes chunks marked dirty, a few per call so a burst of new
+    /// chunks never stalls a tick; returns the ones whose light actually
+    /// changed so the server can tell the players watching them.
+    pub fn flush_light(&mut self) -> Vec<ChunkPos> {
+        const PER_CALL: usize = 8;
+        let mut changed = Vec::new();
+        for _ in 0..PER_CALL {
+            let Some(pos) = self.light_dirty.iter().next().copied() else { break };
+            self.light_dirty.remove(&pos);
+            if self.chunks.contains_key(&pos) && self.recompute_light(pos) {
+                changed.push(pos);
+            }
+        }
+        changed
+    }
+
+    /// The current light of a loaded chunk as a `light_update` packet.
+    pub fn light_packet(&self, pos: ChunkPos) -> Option<garnet_protocol::packets::play::clientbound::LightUpdate> {
+        let chunk = self.chunks.get(&pos)?;
+        Some(garnet_protocol::packets::play::clientbound::LightUpdate {
+            chunk_x: pos.x,
+            chunk_z: pos.z,
+            light: crate::encode::light_data(chunk),
+        })
+    }
+
+    /// Makes sure a loaded chunk has light before it is encoded.
+    fn ensure_light(&mut self, pos: ChunkPos) {
+        let missing = self.chunks.get(&pos).map(|c| c.light.is_none()).unwrap_or(false);
+        if missing || self.light_dirty.remove(&pos) {
+            self.recompute_light(pos);
+        }
     }
 
     pub fn chunk(&self, pos: ChunkPos) -> Option<&Chunk> {
@@ -200,14 +301,18 @@ impl World {
     /// generator never alters chunks players have already seen.
     pub fn insert_chunk(&mut self, mut chunk: Chunk) {
         chunk.dirty = true;
-        self.last_used.insert(chunk.pos, Instant::now());
-        self.chunks.entry(chunk.pos).or_insert(chunk);
+        let pos = chunk.pos;
+        self.last_used.insert(pos, Instant::now());
+        self.chunks.entry(pos).or_insert(chunk);
+        self.light_arrived(pos);
     }
 
     /// Adds a chunk read from disk (clean: nothing to save yet).
     pub fn insert_loaded_chunk(&mut self, chunk: Chunk) {
-        self.last_used.insert(chunk.pos, Instant::now());
-        self.chunks.entry(chunk.pos).or_insert(chunk);
+        let pos = chunk.pos;
+        self.last_used.insert(pos, Instant::now());
+        self.chunks.entry(pos).or_insert(chunk);
+        self.light_arrived(pos);
     }
 
     pub fn touch(&mut self, pos: ChunkPos) {
@@ -231,14 +336,25 @@ impl World {
     }
 
     pub fn set_block(&mut self, pos: BlockPos, state: u32) -> Result<bool> {
+        let table = Arc::clone(&self.data);
         let chunk = self.chunk_mut(pos.chunk())?;
-        Ok(chunk.set_block(pos.x, pos.y, pos.z, state))
+        let before = chunk.get_block(pos.x, pos.y, pos.z).unwrap_or(0);
+        let changed = chunk.set_block(pos.x, pos.y, pos.z, state);
+        if changed {
+            let light = &table.light;
+            if light.opacity(before) != light.opacity(state) || light.emission(before) != light.emission(state) {
+                self.light_touched(pos);
+            }
+        }
+        Ok(changed)
     }
 
     /// Encodes a chunk for the network.
     pub fn chunk_packet(&mut self, pos: ChunkPos) -> Result<ChunkData> {
         let biome_count = self.data.dynamic.get("worldgen/biome").map(|r| r.entries.len()).unwrap_or(1);
         let data = Arc::clone(&self.data);
+        self.chunk_mut(pos)?;
+        self.ensure_light(pos);
         let chunk = self.chunk_mut(pos)?;
         Ok(encode_chunk(
             chunk,
