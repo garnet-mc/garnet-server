@@ -149,12 +149,27 @@ pub async fn on_join(server: &Arc<Server>, player: &Arc<Player>) {
     }
 
     server.broadcast_chat(Text::new(format!("{} joined the game", player.name())).color("yellow"));
+    welcome(server, player);
     tracing::info!("{} joined ({} online)", player.name(), server.online_count());
     let event = Event::PlayerJoin {
         uuid: player.uuid,
         name: player.name().to_owned(),
     };
     server.mods.lock().unwrap_or_else(|e| e.into_inner()).dispatch(&event);
+}
+
+/// A short Garnet-styled hello so players know what they joined and what
+/// the client can do here.
+fn welcome(server: &Arc<Server>, player: &Arc<Player>) {
+    let config = server.config.read().unwrap_or_else(|e| e.into_inner());
+    let name = config.server.name.clone();
+    let voice = config.voice.enabled;
+    drop(config);
+    let mut line = Text::new("◆ ").color("#e04060").append(Text::new("Garnet").color("#e04060").bold()).append(Text::new(" · ").color("gray")).append(Text::new(name).color("white"));
+    if voice {
+        line = line.append(Text::new("  ·  voice chat on (hold V)").color("gray"));
+    }
+    player.send(&cb::SystemChat { content: line, overlay: false });
 }
 
 pub async fn on_quit(server: &Arc<Server>, player: &Arc<Player>) {

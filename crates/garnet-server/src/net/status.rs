@@ -53,10 +53,14 @@ fn build_status_json(conn: &Connection) -> String {
     json.to_string()
 }
 
-/// `server-icon.png` next to the config, as a data URL. Read on every ping;
-/// it is tiny and this keeps changes instant.
+/// The Garnet mark, shown in the server list unless the owner drops their
+/// own `server-icon.png` next to the config.
+const DEFAULT_ICON: &[u8] = include_bytes!("server-icon.png");
+
+/// `server-icon.png` next to the config (or the Garnet icon), as a data URL.
+/// Read on every ping; it is tiny and this keeps changes instant.
 fn load_favicon(root: &std::path::Path) -> Option<String> {
-    let bytes = std::fs::read(root.join("server-icon.png")).ok()?;
+    let bytes = std::fs::read(root.join("server-icon.png")).unwrap_or_else(|_| DEFAULT_ICON.to_vec());
     Some(format!("data:image/png;base64,{}", base64_encode(&bytes)))
 }
 
