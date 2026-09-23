@@ -132,18 +132,38 @@ pub struct NoiseGenerator {
     continents: Fbm<Perlin>,
     hills: Fbm<Perlin>,
     detail: Fbm<Perlin>,
+    /// Vanilla's own idea of which biome belongs where, when the game's
+    /// generation data has been prepared. The terrain under it is still
+    /// ours; the biomes on top of it are the game's.
+    climate: Option<crate::vanilla::climate::BiomeMap>,
+    /// The block each biome's ground is made of, by state id.
+    ground: std::collections::HashMap<String, (u32, u32, u32)>,
 }
 
 impl NoiseGenerator {
     pub fn new(seed: i64, blocks: Blocks, biomes: Biomes) -> Self {
-        let seed = seed as u32;
+        Self::with_climate(seed, blocks, biomes, None, std::collections::HashMap::new())
+    }
+
+    /// The same, with vanilla's biomes laid over it. `ground` says which
+    /// block state each biome's top, filling and sea floor are.
+    pub fn with_climate(
+        seed: i64,
+        blocks: Blocks,
+        biomes: Biomes,
+        climate: Option<crate::vanilla::climate::BiomeMap>,
+        ground: std::collections::HashMap<String, (u32, u32, u32)>,
+    ) -> Self {
+        let noise_seed = seed as u32;
         Self {
-            seed,
+            seed: noise_seed,
             blocks,
             biomes,
-            continents: Fbm::<Perlin>::new(seed).set_octaves(3).set_frequency(0.0015),
-            hills: Fbm::<Perlin>::new(seed.wrapping_add(1)).set_octaves(4).set_frequency(0.008),
-            detail: Fbm::<Perlin>::new(seed.wrapping_add(2)).set_octaves(2).set_frequency(0.05),
+            continents: Fbm::<Perlin>::new(noise_seed).set_octaves(3).set_frequency(0.0015),
+            hills: Fbm::<Perlin>::new(noise_seed.wrapping_add(1)).set_octaves(4).set_frequency(0.008),
+            detail: Fbm::<Perlin>::new(noise_seed.wrapping_add(2)).set_octaves(2).set_frequency(0.05),
+            climate,
+            ground,
         }
     }
 
@@ -183,25 +203,44 @@ impl WorldGenerator for NoiseGenerator {
         let mut chunk = Chunk::new_empty(pos, range, b.air, self.biomes.plains);
         let mut heights = [[0i32; 16]; 16];
 
+        // The biome of each four-block cell, so the ground under a desert
+        // is sand and the ground under a taiga is not.
+        let mut cell_names: [[Option<String>; 4]; 4] = Default::default();
+        if let Some(climate) = &self.climate {
+            for cell_z in 0..4usize {
+                for cell_x in 0..4usize {
+                    let (cx, cz) = ((pos.x * 4) + cell_x as i32, (pos.z * 4) + cell_z as i32);
+                    cell_names[cell_x][cell_z] = Some(climate.name_at(cx, SEA_LEVEL >> 2, cz).to_owned());
+                }
+            }
+        }
+
         for z in 0..16 {
             for x in 0..16 {
                 let (wx, wz) = (pos.x * 16 + x, pos.z * 16 + z);
                 let height = self.height_at(wx, wz).clamp(range.min_y + 2, range.max_y() - 8);
                 heights[x as usize][z as usize] = height;
-                let snowy = self.is_snowy(wx, wz);
                 let underwater = height < SEA_LEVEL;
                 let beach = !underwater && height <= SEA_LEVEL + 1;
+                let here = cell_names[(x >> 2) as usize][(z >> 2) as usize].clone();
+                let snowy = match &here {
+                    Some(name) => crate::vanilla::surface::is_frozen(name),
+                    None => self.is_snowy(wx, wz),
+                };
 
-                let biome = if underwater {
-                    self.biomes.ocean
-                } else if beach {
-                    self.biomes.beach
-                } else if snowy {
-                    self.biomes.snowy_plains
-                } else if self.column_hash(wx / 64, wz / 64) % 3 == 0 {
-                    self.biomes.forest
-                } else {
-                    self.biomes.plains
+                let biome = match &here {
+                    // Vanilla's own biome for this cell, where the game's
+                    // generation data was there to read.
+                    Some(_) => match &self.climate {
+                        Some(climate) => climate.id_at(wx >> 2, SEA_LEVEL >> 2, wz >> 2),
+                        None => self.biomes.plains,
+                    },
+                    // Otherwise the handful we picked ourselves.
+                    None if underwater => self.biomes.ocean,
+                    None if beach => self.biomes.beach,
+                    None if snowy => self.biomes.snowy_plains,
+                    None if self.column_hash(wx / 64, wz / 64) % 3 == 0 => self.biomes.forest,
+                    None => self.biomes.plains,
                 };
                 for y in (range.min_y..=height.max(SEA_LEVEL)).step_by(4) {
                     chunk.sections[((y - range.min_y) >> 4) as usize].set_biome(
@@ -212,6 +251,8 @@ impl WorldGenerator for NoiseGenerator {
                     );
                 }
 
+                // What this biome's ground is made of, if we know it.
+                let ground = here.as_deref().and_then(|name| self.ground.get(name)).copied();
                 for y in range.min_y..=height {
                     let depth = height - y;
                     let state = if y == range.min_y {
@@ -219,17 +260,27 @@ impl WorldGenerator for NoiseGenerator {
                     } else if y < 0 && depth > 4 {
                         b.deepslate
                     } else if depth == 0 {
-                        if underwater {
-                            if self.column_hash(wx, wz) % 4 == 0 { b.gravel } else { b.sand }
-                        } else if beach {
-                            b.sand
-                        } else if snowy {
-                            b.snow_block
-                        } else {
-                            b.grass_block
+                        match (&ground, underwater) {
+                            (Some((_, _, floor)), true) => *floor,
+                            (Some((top, _, _)), false) => *top,
+                            (None, true) => {
+                                if self.column_hash(wx, wz) % 4 == 0 {
+                                    b.gravel
+                                } else {
+                                    b.sand
+                                }
+                            }
+                            (None, false) if beach => b.sand,
+                            (None, false) if snowy => b.snow_block,
+                            (None, false) => b.grass_block,
                         }
                     } else if depth <= 3 {
-                        if underwater || beach { b.sand } else { b.dirt }
+                        match (&ground, underwater) {
+                            (Some((_, under, _)), false) => *under,
+                            (Some((_, _, floor)), true) => *floor,
+                            (None, _) if underwater || beach => b.sand,
+                            (None, _) => b.dirt,
+                        }
                     } else {
                         b.stone
                     };
@@ -248,6 +299,12 @@ impl WorldGenerator for NoiseGenerator {
                 let (wx, wz) = (pos.x * 16 + x, pos.z * 16 + z);
                 let ground = heights[x as usize][z as usize];
                 if chunk.get_block(x, ground, z) != Some(b.grass_block) {
+                    continue;
+                }
+                let bare = cell_names[(x >> 2) as usize][(z >> 2) as usize]
+                    .as_deref()
+                    .is_some_and(crate::vanilla::surface::is_bare);
+                if bare {
                     continue;
                 }
                 let roll = self.column_hash(wx, wz) % 1000;

@@ -83,7 +83,18 @@ impl World {
 
         let generator: Arc<dyn WorldGenerator> = match settings.generator {
             GeneratorKind::Flat => Arc::new(FlatGenerator::classic(&blocks, biomes.plains)),
-            GeneratorKind::Noise => Arc::new(NoiseGenerator::new(settings.seed, blocks, biomes)),
+            GeneratorKind::Noise => {
+                // Where the game's own generation data has been prepared,
+                // biomes go where vanilla puts them for this seed.
+                let datapack = data.version_dir.join("datapack");
+                let ids = biome_ids(&data);
+                let ground = biome_ground(&data);
+                let climate = crate::vanilla::climate::BiomeMap::new(&datapack, settings.seed, ids, biomes.plains);
+                if climate.is_some() {
+                    tracing::info!("biomes placed the way vanilla places them for seed {}", settings.seed);
+                }
+                Arc::new(NoiseGenerator::with_climate(settings.seed, blocks, biomes, climate, ground))
+            }
         };
 
         let mut world = Self {
@@ -489,4 +500,33 @@ fn chrono_now_millis() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// Every biome the client knows, by name, with the id it knows it by.
+fn biome_ids(data: &GameData) -> std::collections::HashMap<String, u32> {
+    let mut out = std::collections::HashMap::new();
+    if let Some(registry) = data.dynamic.get("worldgen/biome") {
+        for (index, (name, _)) in registry.entries.iter().enumerate() {
+            out.insert(name.to_string(), index as u32);
+        }
+    }
+    out
+}
+
+/// What each biome's ground is made of, as block state ids: the top, what
+/// is under it, and what lies on the sea floor.
+fn biome_ground(data: &GameData) -> std::collections::HashMap<String, (u32, u32, u32)> {
+    let state = |name: &str| data.blocks.default_state(name).map(|id| id as u32);
+    let mut out = std::collections::HashMap::new();
+    if let Some(registry) = data.dynamic.get("worldgen/biome") {
+        for (name, _) in &registry.entries {
+            let name = name.to_string();
+            let ground = crate::vanilla::surface::ground_of(&name);
+            let Some(top) = state(ground.top) else { continue };
+            let Some(under) = state(ground.under) else { continue };
+            let Some(floor) = state(ground.underwater) else { continue };
+            out.insert(name, (top, under, floor));
+        }
+    }
+    out
 }

@@ -10,14 +10,15 @@ through comparators, observers, pistons and TNT, hoppers, experience
 and tools that wear out, anvils, enchanting tables and brewing stands,
 bows and the rest of what flies, zombies and their cousins, skeletons,
 creepers, witches, endermen that keep to themselves, villagers that
-take up a trade, golems built out of blocks, mobs that find
+take up a trade, golems built out of blocks, biomes where vanilla puts
+them, mobs that find
 their way round what is in it, a dawn that burns the undead, animals
 that breed and shear and follow the food, saves, mods, the admin panel,
 voice relaying and anti-cheat.
 
 What comes next, roughly in order:
 
-1. **Structures** – nothing is generated but the ground: no villages, mineshafts, temples or strongholds anywhere in the world. The pieces are in the data pack as templates, waiting to be placed.
+1. **Terrain the shape vanilla makes it** – biomes already land where vanilla puts them for a seed; the ground under them is still ours. The density function graph is read and checked, so what is left is reading it over a whole chunk, the blended noise, the aquifers and the surface rules (docs/vanilla-worldgen.md).
 2. **The rest of the workbenches** – the stonecutter, the grindstone and the smithing table (chests, the crafting grid, furnaces, anvils, enchanting tables and brewing stands are done).
 3. **Rails and minecarts** – and the rest of what rides them (hoppers and the rest of redstone are done: wire, torches, levers, buttons, plates, repeaters, comparators, observers, pistons, dispensers, droppers, note blocks, lamps, doors and TNT).
 3. **More mobs** – skeletons and creepers want arrows and explosions first, and everything wants proper pathfinding, sounds and experience orbs.

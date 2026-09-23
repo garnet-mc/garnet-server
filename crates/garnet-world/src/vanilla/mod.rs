@@ -9,3 +9,4 @@ pub mod climate;
 pub mod density;
 pub mod noise;
 pub mod rng;
+pub mod surface;

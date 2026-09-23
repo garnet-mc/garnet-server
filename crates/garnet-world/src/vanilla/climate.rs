@@ -167,6 +167,49 @@ fn distance_to((min, max): (i64, i64), value: i64) -> i64 {
     }
 }
 
+/// The biome at a place, for a world: the climate sampler and the table
+/// together, with the names resolved to the ids a chunk stores.
+pub struct BiomeMap {
+    sampler: Sampler,
+    biomes: Biomes,
+    /// Biome name to the id the client knows it by.
+    ids: std::collections::HashMap<String, u32>,
+    /// What we fall back on for a biome this version has no id for.
+    fallback: u32,
+}
+
+impl BiomeMap {
+    /// Builds the map, or nothing if the data pack has no generation data
+    /// to read -- in which case the caller keeps its own biomes.
+    pub fn new(datapack: &Path, seed: i64, ids: std::collections::HashMap<String, u32>, fallback: u32) -> Option<Self> {
+        if !datapack.join("minecraft/worldgen/noise/temperature.json").exists() {
+            return None;
+        }
+        let biomes = Biomes::overworld();
+        if biomes.is_empty() {
+            return None;
+        }
+        Some(Self {
+            sampler: Sampler::new(datapack, seed),
+            biomes,
+            ids,
+            fallback,
+        })
+    }
+
+    /// The biome name in one four-block cell.
+    pub fn name_at(&self, cell_x: i32, cell_y: i32, cell_z: i32) -> &str {
+        let target = self.sampler.sample(cell_x, cell_y, cell_z);
+        self.biomes.nearest(&target).unwrap_or("minecraft:plains")
+    }
+
+    /// The same, as the id a chunk stores.
+    pub fn id_at(&self, cell_x: i32, cell_y: i32, cell_z: i32) -> u32 {
+        let name = self.name_at(cell_x, cell_y, cell_z);
+        self.ids.get(name).copied().unwrap_or(self.fallback)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

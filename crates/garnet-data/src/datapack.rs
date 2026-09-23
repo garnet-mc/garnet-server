@@ -120,7 +120,13 @@ pub fn extract_datapack(inner_jar: &Path, target_dir: &Path) -> Result<()> {
         let is_provider = after_ns.starts_with("/context_int_provider/") || after_ns.starts_with("/context_float_provider/");
         // What villagers will trade you, which 26.3 writes down at last.
         let is_trade = after_ns.starts_with("/villager_trade/");
-        if !is_tag && !is_registry && !is_block_loot && !is_recipe && !is_provider && !is_trade {
+        // How the world is shaped: the noises, the graph of functions over
+        // them, and the settings that tie the two together.
+        let is_worldgen = after_ns.starts_with("/worldgen/noise/")
+            || after_ns.starts_with("/worldgen/density_function/")
+            || after_ns.starts_with("/worldgen/noise_settings/")
+            || after_ns.starts_with("/worldgen/multi_noise_biome_source_parameter_list/");
+        if !is_tag && !is_registry && !is_block_loot && !is_recipe && !is_provider && !is_trade && !is_worldgen {
             continue;
         }
         let out_path = target_dir.join(name.trim_start_matches("data/"));
