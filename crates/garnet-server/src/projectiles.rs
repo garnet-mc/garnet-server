@@ -204,6 +204,32 @@ pub fn mob_shoots(server: &Arc<Server>, from: (f64, f64, f64), at: (f64, f64, f6
     world_entities::spawn(server, entity);
 }
 
+/// A mob lobs a potion at someone, the way a witch does: high and slow,
+/// so it breaks at their feet.
+pub fn mob_throws(server: &Arc<Server>, from: (f64, f64, f64), at: (f64, f64, f64), owner: i32, potion: i32) {
+    let (dx, dy, dz) = (at.0 - from.0, at.1 - from.1 + 1.1, at.2 - from.2);
+    let flat = (dx * dx + dz * dz).sqrt();
+    if flat < 0.01 {
+        return;
+    }
+    // Thrown up at an angle so it comes down on them.
+    let aim = (dx, dy + flat * 0.2, dz);
+    let length = (aim.0 * aim.0 + aim.1 * aim.1 + aim.2 * aim.2).sqrt();
+    let speed = 0.75;
+    let Some(mut entity) = world_entities::new_entity(server, "minecraft:splash_potion", from.0, from.1, from.2) else {
+        return;
+    };
+    entity.velocity = (aim.0 / length * speed, aim.1 / length * speed, aim.2 / length * speed);
+    entity.no_gravity = true;
+    entity.projectile = Some(Projectile {
+        owner: Some(owner),
+        gravity: gravity_of("splash_potion"),
+        potion: Some(potion),
+        ..Projectile::default()
+    });
+    world_entities::spawn(server, entity);
+}
+
 /// Puts one thing in flight, aimed where the player is looking.
 fn launch(server: &Arc<Server>, player: &Arc<Player>, kind: &str, speed: f64, lob: f32, mut shot: Projectile) -> Option<i32> {
     let (x, y, z, yaw, pitch, id, uuid) = {
@@ -631,6 +657,10 @@ fn splash(server: &Arc<Server>, entity: &Entity, shot: &Projectile) {
             .collect()
     };
     for (id, x, y, z) in mobs {
+        // Whoever threw it knows better than to stand in it.
+        if Some(id) == shot.owner {
+            continue;
+        }
         let gap = ((entity.x - x).powi(2) + (entity.y - y).powi(2) + (entity.z - z).powi(2)).sqrt();
         if gap > SPLASH_RANGE {
             continue;

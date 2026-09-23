@@ -403,6 +403,11 @@ fn damage_entity(server: &Arc<Server>, entity_id: i32, damage: f32, from: (f64, 
     };
     let chunk = garnet_protocol::ChunkPos::from_block(pos.0.floor() as i32, pos.2.floor() as i32);
     server.broadcast_near(chunk, &cb::HurtAnimation { entity_id, yaw: 0.0 }, None);
+    if !dead {
+        // Something that was keeping to itself has had enough of that.
+        crate::mobs::provoke(server, entity_id);
+        crate::mobs::startled(server, entity_id);
+    }
     if dead {
         drop_loot(server, &kind, pos);
         let worth = crate::experience::for_mob(&kind);

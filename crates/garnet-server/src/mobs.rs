@@ -26,6 +26,11 @@ struct Kind {
     fights: Fight,
     /// The undead catch fire in the morning.
     burns_by_day: bool,
+    /// How often one turns up, against the others. Zero never spawns on
+    /// its own: it has to be summoned or come from a spawner.
+    weight: i32,
+    /// Minds its own business until someone starts something.
+    neutral: bool,
 }
 
 /// What a mob does when it gets to you.
@@ -34,6 +39,8 @@ enum Fight {
     Melee,
     /// Keeps its distance and shoots.
     Bow,
+    /// Keeps its distance and throws something that breaks.
+    Potion,
     /// Walks up and goes off, with this much force.
     Blast,
     None,
@@ -48,6 +55,41 @@ const KINDS: &[Kind] = &[
         hostile: true,
         fights: Fight::Melee,
         burns_by_day: true,
+        weight: 100,
+        neutral: false,
+    },
+    Kind {
+        name: "husk",
+        health: 20.0,
+        speed: 0.115,
+        damage: 3.0,
+        hostile: true,
+        fights: Fight::Melee,
+        burns_by_day: false,
+        weight: 20,
+        neutral: false,
+    },
+    Kind {
+        name: "zombie_villager",
+        health: 20.0,
+        speed: 0.115,
+        damage: 3.0,
+        hostile: true,
+        fights: Fight::Melee,
+        burns_by_day: true,
+        weight: 5,
+        neutral: false,
+    },
+    Kind {
+        name: "drowned",
+        health: 20.0,
+        speed: 0.115,
+        damage: 3.0,
+        hostile: true,
+        fights: Fight::Melee,
+        burns_by_day: false,
+        weight: 20,
+        neutral: false,
     },
     Kind {
         name: "skeleton",
@@ -57,6 +99,19 @@ const KINDS: &[Kind] = &[
         hostile: true,
         fights: Fight::Bow,
         burns_by_day: true,
+        weight: 80,
+        neutral: false,
+    },
+    Kind {
+        name: "stray",
+        health: 20.0,
+        speed: 0.12,
+        damage: 2.0,
+        hostile: true,
+        fights: Fight::Bow,
+        burns_by_day: true,
+        weight: 20,
+        neutral: false,
     },
     Kind {
         name: "creeper",
@@ -66,6 +121,8 @@ const KINDS: &[Kind] = &[
         hostile: true,
         fights: Fight::Blast,
         burns_by_day: false,
+        weight: 100,
+        neutral: false,
     },
     Kind {
         name: "spider",
@@ -75,6 +132,41 @@ const KINDS: &[Kind] = &[
         hostile: true,
         fights: Fight::Melee,
         burns_by_day: false,
+        weight: 100,
+        neutral: false,
+    },
+    Kind {
+        name: "cave_spider",
+        health: 12.0,
+        speed: 0.17,
+        damage: 2.0,
+        hostile: true,
+        fights: Fight::Melee,
+        burns_by_day: false,
+        weight: 0,
+        neutral: false,
+    },
+    Kind {
+        name: "witch",
+        health: 26.0,
+        speed: 0.11,
+        damage: 0.0,
+        hostile: true,
+        fights: Fight::Potion,
+        burns_by_day: false,
+        weight: 10,
+        neutral: false,
+    },
+    Kind {
+        name: "enderman",
+        health: 40.0,
+        speed: 0.13,
+        damage: 7.0,
+        hostile: true,
+        fights: Fight::Melee,
+        burns_by_day: false,
+        weight: 10,
+        neutral: true,
     },
     Kind {
         name: "pig",
@@ -84,6 +176,8 @@ const KINDS: &[Kind] = &[
         hostile: false,
         fights: Fight::None,
         burns_by_day: false,
+        weight: 100,
+        neutral: false,
     },
     Kind {
         name: "cow",
@@ -93,6 +187,8 @@ const KINDS: &[Kind] = &[
         hostile: false,
         fights: Fight::None,
         burns_by_day: false,
+        weight: 100,
+        neutral: false,
     },
     Kind {
         name: "sheep",
@@ -102,6 +198,8 @@ const KINDS: &[Kind] = &[
         hostile: false,
         fights: Fight::None,
         burns_by_day: false,
+        weight: 100,
+        neutral: false,
     },
     Kind {
         name: "chicken",
@@ -111,6 +209,8 @@ const KINDS: &[Kind] = &[
         hostile: false,
         fights: Fight::None,
         burns_by_day: false,
+        weight: 100,
+        neutral: false,
     },
 ];
 
@@ -124,6 +224,10 @@ const BLAST: f32 = 3.0;
 const BOW_RANGE: f64 = 15.0;
 const KEEP_AWAY: f64 = 5.0;
 const SHOOT_EVERY: u32 = 40;
+/// A witch throws from about as far, rather more slowly.
+const THROW_EVERY: u32 = 60;
+/// How long a mob that was minding its own business stays cross.
+const GRUDGE: u64 = 600;
 
 /// How far a hostile mob notices a player from.
 const SIGHT: f64 = 16.0;
@@ -220,7 +324,9 @@ fn think(server: &Arc<Server>, tick: u64) {
 
         let mut goal: Option<(f64, f64, f64)> = None;
         let mut attacked = false;
-        if kind.hostile {
+        // One that keeps to itself only joins in once it has been hit.
+        let minding_its_own = kind.neutral && mob.provoked_until <= tick;
+        if kind.hostile && !minding_its_own {
             if let Some((distance, _, (px, py, pz), player)) = &nearest {
                 match kind.fights {
                     // A bow wants room: it closes to a comfortable range
@@ -232,6 +338,14 @@ fn think(server: &Arc<Server>, tick: u64) {
                             false => None,
                         };
                         attacked = shoot(server, &mob, (*px, *py, *pz));
+                    }
+                    Fight::Potion if *distance <= BOW_RANGE => {
+                        goal = match *distance < KEEP_AWAY {
+                            true => Some((mob.x * 2.0 - px, mob.y, mob.z * 2.0 - pz)),
+                            false if *distance > KEEP_AWAY + 3.0 => Some((*px, *py, *pz)),
+                            false => None,
+                        };
+                        attacked = throw_potion(server, &mob, (*px, *py, *pz));
                     }
                     Fight::Blast if *distance <= SIGHT => {
                         goal = Some((*px, *py, *pz));
@@ -270,6 +384,7 @@ fn think(server: &Arc<Server>, tick: u64) {
             if let Some(stored) = entities.by_id.get_mut(&mob.id) {
                 stored.attack_cooldown = match kind.fights {
                     Fight::Bow => SHOOT_EVERY,
+                    Fight::Potion => THROW_EVERY,
                     _ => ATTACK_EVERY,
                 };
             }
@@ -309,7 +424,9 @@ fn walk(server: &Arc<Server>, mob: &Entity, kind: &Kind, to: (f64, f64, f64), ti
         }
     };
     let mut entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(stored) = entities.by_id.get_mut(&mob.id) else { return };
+    let Some(stored) = entities.by_id.get_mut(&mob.id) else {
+        return;
+    };
     let (dx, dz) = (tx - stored.x, tz - stored.z);
     let distance = (dx * dx + dz * dz).sqrt();
     if distance < 0.1 {
@@ -333,7 +450,8 @@ fn path_for(server: &Arc<Server>, mob: &Entity, goal: BlockPos, tick: u64, budge
     if let Some(current) = &mut path {
         current.advance(mob.x, mob.y, mob.z);
         let stale = tick.saturating_sub(current.found_tick) > crate::pathfinding::REPATH_TICKS;
-        let moved = (current.goal.x - goal.x).abs() > 1 || (current.goal.z - goal.z).abs() > 1 || (current.goal.y - goal.y).abs() > 1;
+        let moved =
+            (current.goal.x - goal.x).abs() > 1 || (current.goal.z - goal.z).abs() > 1 || (current.goal.y - goal.y).abs() > 1;
         if current.done() || stale || moved {
             path = None;
         }
@@ -383,6 +501,114 @@ fn shoot(server: &Arc<Server>, mob: &Entity, at: (f64, f64, f64)) -> bool {
     };
     crate::projectiles::mob_shoots(server, from, body, mob.id, spread);
     true
+}
+
+/// A witch throws a potion of harming, if it has waited long enough and
+/// can see who it is aiming at.
+fn throw_potion(server: &Arc<Server>, mob: &Entity, at: (f64, f64, f64)) -> bool {
+    if mob.attack_cooldown > 0 {
+        return false;
+    }
+    if server.rules.read().unwrap_or_else(|e| e.into_inner()).difficulty_id() == 0 {
+        return false;
+    }
+    let from = (mob.x, mob.y + 1.4, mob.z);
+    if !can_see(server, from, (at.0, at.1 + 1.4, at.2)) {
+        return false;
+    }
+    // What it throws depends on how close you are, as vanilla's does.
+    let distance = ((at.0 - mob.x).powi(2) + (at.2 - mob.z).powi(2)).sqrt();
+    let potion = match distance < 8.0 {
+        true => "minecraft:harming",
+        false => "minecraft:slowness",
+    };
+    let Some(id) = server.data.registries.id_of("potion", potion) else {
+        return false;
+    };
+    crate::projectiles::mob_throws(server, from, at, mob.id, id);
+    true
+}
+
+/// Someone hit a mob that was minding its own business. It will remember
+/// that for a while.
+pub fn provoke(server: &Arc<Server>, id: i32) {
+    let until = server.current_tick() + GRUDGE;
+    let mut entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(stored) = entities.by_id.get_mut(&id) {
+        if kind_of(&stored.kind).is_some_and(|kind| kind.neutral) {
+            stored.provoked_until = until;
+        }
+    }
+}
+
+/// An enderman that is hit is as likely as not to be somewhere else a
+/// moment later.
+pub fn startled(server: &Arc<Server>, id: i32) {
+    let mob = {
+        let entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
+        match entities.by_id.get(&id) {
+            Some(entity) if entity.kind.ends_with("enderman") => entity.clone(),
+            _ => return,
+        }
+    };
+    if rand::random::<f32>() > 0.5 {
+        return;
+    }
+    // Somewhere within a few dozen blocks that it can stand.
+    for _ in 0..8 {
+        let x = mob.x + rand::random_range(-32.0..32.0);
+        let z = mob.z + rand::random_range(-32.0..32.0);
+        let Some((y, _)) = ground_at(server, x, z, mob.y) else {
+            continue;
+        };
+        {
+            let mut entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(stored) = entities.by_id.get_mut(&id) {
+                stored.velocity = (0.0, 0.0, 0.0);
+                stored.path = None;
+            }
+            entities.set_position(id, x, y, z);
+        }
+        let chunk = garnet_protocol::ChunkPos::from_block(x.floor() as i32, z.floor() as i32);
+        server.broadcast_near(
+            chunk,
+            &garnet_protocol::packets::play::clientbound::EntityPositionSync {
+                entity_id: id,
+                x,
+                y,
+                z,
+                yaw: mob.yaw,
+                pitch: 0.0,
+                on_ground: true,
+            },
+            None,
+        );
+        vanish(server, x, y, z);
+        return;
+    }
+}
+
+/// The sound of an enderman going.
+fn vanish(server: &Arc<Server>, x: f64, y: f64, z: f64) {
+    let Some(name) = garnet_protocol::Identifier::parse("minecraft:entity.enderman.teleport") else {
+        return;
+    };
+    let registry_id = server.data.registries.id_of("sound_event", &name.to_string());
+    server.broadcast_near(
+        garnet_protocol::ChunkPos::from_block(x.floor() as i32, z.floor() as i32),
+        &garnet_protocol::packets::play::clientbound::Sound {
+            name,
+            registry_id,
+            source: garnet_protocol::packets::play::clientbound::SoundSource::Hostile,
+            x,
+            y,
+            z,
+            volume: 1.0,
+            pitch: 1.0,
+            seed: rand::random(),
+        },
+        None,
+    );
 }
 
 /// Whether there is clear air between two points.
@@ -517,7 +743,9 @@ fn hurt_by_the_world(server: &Arc<Server>) {
 
 fn block_at(server: &Arc<Server>, x: f64, y: f64, z: f64) -> String {
     let pos = BlockPos::new(x.floor() as i32, y.floor() as i32, z.floor() as i32);
-    let Ok(state) = server.world().get_block(pos) else { return String::new() };
+    let Ok(state) = server.world().get_block(pos) else {
+        return String::new();
+    };
     server
         .data
         .blocks
@@ -632,23 +860,27 @@ fn spawn_round(server: &Arc<Server>, difficulty: u8) {
             let radius = SPAWN_MIN + rand::random::<f64>() * (SPAWN_MAX - SPAWN_MIN);
             let x = px + angle.cos() * radius;
             let z = pz + angle.sin() * radius;
-            let Some((y, ground)) = ground_at(server, x, z, py) else { continue };
+            let Some((y, ground)) = ground_at(server, x, z, py) else {
+                continue;
+            };
             let light = light_at(server, x, y, z);
             let hostile = light.0 <= 0 && difficulty > 0 && hostiles < HOSTILE_CAP;
             let passive = light.1 >= 9 && ground == "minecraft:grass_block" && passives < PASSIVE_CAP;
             let candidates: Vec<&Kind> = if hostile {
-                KINDS.iter().filter(|k| k.hostile).collect()
+                KINDS.iter().filter(|k| k.hostile && k.weight > 0).collect()
             } else if passive {
-                KINDS.iter().filter(|k| !k.hostile).collect()
+                KINDS.iter().filter(|k| !k.hostile && k.weight > 0).collect()
             } else {
                 continue;
             };
-            let kind = candidates[rand::random_range(0..candidates.len())];
+            let Some(kind) = by_weight(&candidates) else { continue };
             let pack = if kind.hostile { 1 } else { rand::random_range(2..5) };
             for n in 0..pack {
                 let ox = x + (n as f64 - 1.0) * 0.6;
                 let oz = z + (n as f64 - 1.0) * 0.6;
-                let Some((sy, _)) = ground_at(server, ox, oz, py) else { continue };
+                let Some((sy, _)) = ground_at(server, ox, oz, py) else {
+                    continue;
+                };
                 if let Some(mut entity) = world_entities::new_entity(server, kind.name, ox, sy, oz) {
                     entity.health = kind.health;
                     if crate::animals::is_animal(kind.name) {
@@ -662,6 +894,22 @@ fn spawn_round(server: &Arc<Server>, difficulty: u8) {
             break; // one group per player per round is plenty
         }
     }
+}
+
+/// Picks one of these, the commoner sorts more often.
+fn by_weight<'a>(candidates: &[&'a Kind]) -> Option<&'a Kind> {
+    let total: i32 = candidates.iter().map(|kind| kind.weight).sum();
+    if total <= 0 {
+        return None;
+    }
+    let mut roll = rand::random_range(0..total);
+    candidates
+        .iter()
+        .find(|kind| {
+            roll -= kind.weight;
+            roll < 0
+        })
+        .copied()
 }
 
 /// How many mobs of each sort are already near this spot.
@@ -702,7 +950,10 @@ fn ground_at(server: &Arc<Server>, x: f64, z: f64, near_y: f64) -> Option<(f64, 
         if !blocks.is_air(feet as i32) || !blocks.is_air(head as i32) {
             continue;
         }
-        let name = blocks.block_of_state(below as i32).map(|b| b.name.clone()).unwrap_or_default();
+        let name = blocks
+            .block_of_state(below as i32)
+            .map(|b| b.name.clone())
+            .unwrap_or_default();
         return Some(((y + 1) as f64, name));
     }
     None
@@ -712,7 +963,9 @@ fn ground_at(server: &Arc<Server>, x: f64, z: f64, near_y: f64) -> Option<(f64, 
 fn light_at(server: &Arc<Server>, x: f64, y: f64, z: f64) -> (u8, u8) {
     let pos = BlockPos::new(x.floor() as i32, y.floor() as i32, z.floor() as i32);
     let mut world = server.world();
-    let Ok(chunk) = world.chunk_mut(pos.chunk()) else { return (15, 15) };
+    let Ok(chunk) = world.chunk_mut(pos.chunk()) else {
+        return (15, 15);
+    };
     let Some(light) = chunk.light.as_ref() else { return (15, 15) };
     if !chunk.range.contains(pos.y) {
         return (15, 15);

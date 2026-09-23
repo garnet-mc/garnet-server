@@ -59,6 +59,8 @@ pub struct Entity {
     pub path: Option<crate::pathfinding::Path>,
     /// How old a farm animal is, and what it is up to.
     pub animal: Option<crate::animals::Animal>,
+    /// Until when a mob that keeps to itself is cross with someone.
+    pub provoked_until: u64,
 }
 
 impl Entity {
@@ -231,6 +233,7 @@ pub fn new_entity(server: &Server, kind: &str, x: f64, y: f64, z: f64) -> Option
         burning: false,
         path: None,
         animal: None,
+        provoked_until: 0,
     })
 }
 

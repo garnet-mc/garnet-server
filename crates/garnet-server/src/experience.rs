@@ -183,7 +183,7 @@ pub fn for_block(block: &str) -> i32 {
 pub fn for_mob(kind: &str) -> i32 {
     let short = kind.strip_prefix("minecraft:").unwrap_or(kind);
     match short {
-        "zombie" | "skeleton" | "spider" | "creeper" | "husk" | "stray" | "drowned" | "cave_spider" => 5,
+        "zombie" | "skeleton" | "spider" | "creeper" | "husk" | "stray" | "drowned" | "cave_spider" | "zombie_villager" => 5,
         "enderman" | "witch" | "blaze" | "piglin" => 6,
         "pig" | "cow" | "sheep" | "chicken" | "rabbit" | "horse" | "wolf" | "cat" => rand::random_range(1..=3),
         "wither" => 50,
