@@ -554,6 +554,8 @@ impl Server {
             crate::furnaces::tick(&self);
             self.doing("brewing");
             crate::brewing::tick(&self);
+            self.doing("animals");
+            crate::animals::tick(&self, tick);
             self.doing("blocks");
             crate::blocks::tick(&self, tick);
             self.doing("explosions");

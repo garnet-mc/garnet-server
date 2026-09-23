@@ -57,6 +57,8 @@ pub struct Entity {
     pub burning: bool,
     /// The way this mob is taking to wherever it is going.
     pub path: Option<crate::pathfinding::Path>,
+    /// How old a farm animal is, and what it is up to.
+    pub animal: Option<crate::animals::Animal>,
 }
 
 impl Entity {
@@ -228,6 +230,7 @@ pub fn new_entity(server: &Server, kind: &str, x: f64, y: f64, z: f64) -> Option
         fuse: 0,
         burning: false,
         path: None,
+        animal: None,
     })
 }
 
@@ -323,6 +326,7 @@ pub fn metadata_packet(entity: &Entity) -> Option<cb::SetEntityData> {
         w.write_f32(entity.health);
         entries.push((9, 3, w.into_inner()));
     }
+    entries.extend(crate::animals::metadata(entity));
     if entries.is_empty() {
         return None;
     }
@@ -642,7 +646,23 @@ fn to_nbt(server: &Server, e: &Entity) -> NbtCompound {
     c.put("UUID", uuid_to_ints(e.uuid));
     c.put("OnGround", e.on_ground);
     c.put("Health", e.health);
-    c.put("Age", e.age as i32);
+    // For an animal `Age` means what vanilla means by it: how long a baby
+    // has left, counted up towards nothing. For everything else it is how
+    // long the thing has been lying about.
+    match &e.animal {
+        Some(animal) => {
+            let now = server.current_tick();
+            c.put("Age", -((animal.grows_up.saturating_sub(now)) as i32));
+            c.put("InLove", animal.in_love_until.saturating_sub(now) as i32);
+            if e.kind.ends_with("sheep") {
+                c.put("Sheared", animal.sheared);
+                c.put("Color", animal.wool as i32);
+            }
+        }
+        None => {
+            c.put("Age", e.age as i32);
+        }
+    }
     c.put("PickupDelay", e.pickup_delay as i16 as i32);
     c.put("NoGravity", e.no_gravity);
     if let Some(name) = &e.custom_name {
@@ -680,6 +700,23 @@ fn from_nbt(server: &Server, c: &NbtCompound) -> Option<Entity> {
     e.on_ground = c.get_bool("OnGround").unwrap_or(false);
     e.health = c.get_f64("Health").map(|h| h as f32).unwrap_or(20.0);
     e.age = c.get_i32("Age").unwrap_or(0).max(0) as u32;
+    if crate::animals::is_animal(kind) {
+        let now = server.current_tick();
+        let age = c.get_i32("Age").unwrap_or(0);
+        let love = c.get_i32("InLove").unwrap_or(0).max(0) as u64;
+        e.animal = Some(crate::animals::Animal {
+            baby: age < 0,
+            grows_up: if age < 0 { now + age.unsigned_abs() as u64 } else { 0 },
+            in_love_until: if love > 0 { now + love } else { 0 },
+            wool: c.get_i32("Color").unwrap_or(0).clamp(0, 15) as u8,
+            sheared: c.get_bool("Sheared").unwrap_or(false),
+            lays_at: match kind.ends_with("chicken") {
+                true => now + rand::random_range(6000..12000),
+                false => 0,
+            },
+            ..crate::animals::Animal::default()
+        });
+    }
     e.pickup_delay = c.get_i32("PickupDelay").unwrap_or(0).max(0) as u32;
     e.no_gravity = c.get_bool("NoGravity").unwrap_or(false);
     e.custom_name = c.get_str("CustomName").map(str::to_owned);

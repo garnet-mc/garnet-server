@@ -9,12 +9,13 @@ growing crops, flowing water and lava, redstone from wire and torches
 through comparators, observers, pistons and TNT, hoppers, experience
 and tools that wear out, anvils, enchanting tables and brewing stands,
 bows and the rest of what flies, skeletons, creepers, mobs that find
-their way round what is in it, a dawn that burns the undead, saves,
-mods, the admin panel, voice relaying and anti-cheat.
+their way round what is in it, a dawn that burns the undead, animals
+that breed and shear and follow the food, saves, mods, the admin panel,
+voice relaying and anti-cheat.
 
 What comes next, roughly in order:
 
-1. **The rest of the mobs** – endermen, witches, drowned and the rest of the cast, and the animals that breed, shear and follow you for wheat (zombies, skeletons, creepers and spiders find their way about now).
+1. **The rest of the cast** – endermen, witches, drowned, husks and strays, and the animals beyond the four farm ones (breeding, shearing, milking and following are done for cows, sheep, pigs and chickens).
 2. **The rest of the workbenches** – the stonecutter, the grindstone and the smithing table (chests, the crafting grid, furnaces, anvils, enchanting tables and brewing stands are done).
 3. **Rails and minecarts** – and the rest of what rides them (hoppers and the rest of redstone are done: wire, torches, levers, buttons, plates, repeaters, comparators, observers, pistons, dispensers, droppers, note blocks, lamps, doors and TNT).
 3. **More mobs** – skeletons and creepers want arrows and explosions first, and everything wants proper pathfinding, sounds and experience orbs.

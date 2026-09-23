@@ -463,7 +463,22 @@ pub async fn handle(server: &Arc<Server>, player: &Arc<Player>, name: &str, r: &
             let p = sb::Attack::read(r)?;
             crate::survival::attack(server, player, p.entity_id, server.current_tick());
         }
-        "interact" | "chat_ack" | "chat_session_update" | "client_tick_end" | "pong"
+        "interact" => {
+            let p = sb::Interact::read(r)?;
+            let eyes = player.lock().eye_position();
+            let target = {
+                let entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
+                entities.by_id.get(&p.entity_id).map(|e| (e.x, e.y, e.z))
+            };
+            // Only what the player could actually reach.
+            if let Some(pos) = target {
+                let creative = player.lock().game_mode == GameMode::Creative;
+                if server.anticheat.check_reach(eyes, (pos.0 as i32, pos.1 as i32, pos.2 as i32), creative).is_none() {
+                    crate::animals::interact(server, player, p.entity_id);
+                }
+            }
+        }
+        "chat_ack" | "chat_session_update" | "client_tick_end" | "pong"
         | "configuration_acknowledged" | "cookie_response" => {}
         _ => {}
     }

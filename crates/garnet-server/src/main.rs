@@ -5,6 +5,7 @@
 //! first run.
 
 mod admin_bridge;
+mod animals;
 mod anticheat;
 mod audit;
 mod anvil;

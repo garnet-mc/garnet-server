@@ -247,6 +247,10 @@ fn think(server: &Arc<Server>, tick: u64) {
                 }
             }
         }
+        // An animal goes where the food is.
+        if goal.is_none() {
+            goal = crate::animals::following(server, &mob);
+        }
         if goal.is_none() && tick % 40 == (mob.id.unsigned_abs() as u64 % 40) {
             // A quiet wander, in a direction that changes now and then.
             let angle = rand::random::<f64>() * std::f64::consts::TAU;
@@ -647,6 +651,11 @@ fn spawn_round(server: &Arc<Server>, difficulty: u8) {
                 let Some((sy, _)) = ground_at(server, ox, oz, py) else { continue };
                 if let Some(mut entity) = world_entities::new_entity(server, kind.name, ox, sy, oz) {
                     entity.health = kind.health;
+                    if crate::animals::is_animal(kind.name) {
+                        // One in twenty of a new flock is a lamb.
+                        let baby = rand::random_range(0..20) == 0;
+                        entity.animal = Some(crate::animals::fresh(kind.name, baby, server.current_tick()));
+                    }
                     world_entities::spawn(server, entity);
                 }
             }
