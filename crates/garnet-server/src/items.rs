@@ -351,10 +351,13 @@ pub fn place_held(server: &Arc<Server>, player: &Arc<Player>, target: BlockPos, 
     let state = blocks.state_with(&block_name, &props).or(Some(block.default_state)).unwrap() as u32;
 
     if !server.set_block(pos, state) {
-    crate::blocks::changed(server, pos);
-    server.schedule_block(pos, 2);
         return false;
     }
+    // Whatever was placed, its neighbours want to hear about it: an
+    // observer to fire, sand to fall, a torch to fall off a wall.
+    crate::blocks::changed(server, pos);
+    server.schedule_block(pos, 2);
+    crate::golems::maybe_build(server, pos, &block_name);
     if mode == GameMode::Survival {
         let mut s = player.lock();
         let slot = &mut s.inventory.slots[held_slot];

@@ -27,6 +27,7 @@ mod experience;
 mod explosions;
 mod fluids;
 mod functions;
+mod golems;
 mod hoppers;
 mod furnaces;
 mod inventory;

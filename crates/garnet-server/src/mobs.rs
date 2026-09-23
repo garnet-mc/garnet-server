@@ -31,6 +31,8 @@ struct Kind {
     weight: i32,
     /// Minds its own business until someone starts something.
     neutral: bool,
+    /// Goes after the hostiles rather than after players.
+    defends: bool,
 }
 
 /// What a mob does when it gets to you.
@@ -57,6 +59,7 @@ const KINDS: &[Kind] = &[
         burns_by_day: true,
         weight: 100,
         neutral: false,
+        defends: false,
     },
     Kind {
         name: "husk",
@@ -68,6 +71,7 @@ const KINDS: &[Kind] = &[
         burns_by_day: false,
         weight: 20,
         neutral: false,
+        defends: false,
     },
     Kind {
         name: "zombie_villager",
@@ -79,6 +83,7 @@ const KINDS: &[Kind] = &[
         burns_by_day: true,
         weight: 5,
         neutral: false,
+        defends: false,
     },
     Kind {
         name: "drowned",
@@ -90,6 +95,7 @@ const KINDS: &[Kind] = &[
         burns_by_day: false,
         weight: 20,
         neutral: false,
+        defends: false,
     },
     Kind {
         name: "skeleton",
@@ -101,6 +107,7 @@ const KINDS: &[Kind] = &[
         burns_by_day: true,
         weight: 80,
         neutral: false,
+        defends: false,
     },
     Kind {
         name: "stray",
@@ -112,6 +119,7 @@ const KINDS: &[Kind] = &[
         burns_by_day: true,
         weight: 20,
         neutral: false,
+        defends: false,
     },
     Kind {
         name: "creeper",
@@ -123,6 +131,7 @@ const KINDS: &[Kind] = &[
         burns_by_day: false,
         weight: 100,
         neutral: false,
+        defends: false,
     },
     Kind {
         name: "spider",
@@ -134,6 +143,7 @@ const KINDS: &[Kind] = &[
         burns_by_day: false,
         weight: 100,
         neutral: false,
+        defends: false,
     },
     Kind {
         name: "cave_spider",
@@ -145,6 +155,7 @@ const KINDS: &[Kind] = &[
         burns_by_day: false,
         weight: 0,
         neutral: false,
+        defends: false,
     },
     Kind {
         name: "witch",
@@ -156,6 +167,7 @@ const KINDS: &[Kind] = &[
         burns_by_day: false,
         weight: 10,
         neutral: false,
+        defends: false,
     },
     Kind {
         name: "enderman",
@@ -167,6 +179,32 @@ const KINDS: &[Kind] = &[
         burns_by_day: false,
         weight: 10,
         neutral: true,
+        defends: false,
+    },
+    // Built rather than born, and on the village's side.
+    Kind {
+        name: "iron_golem",
+        health: 100.0,
+        speed: 0.12,
+        damage: 15.0,
+        hostile: false,
+        fights: Fight::Melee,
+        burns_by_day: false,
+        weight: 0,
+        neutral: false,
+        defends: true,
+    },
+    Kind {
+        name: "snow_golem",
+        health: 4.0,
+        speed: 0.14,
+        damage: 0.0,
+        hostile: false,
+        fights: Fight::Melee,
+        burns_by_day: false,
+        weight: 0,
+        neutral: false,
+        defends: true,
     },
     Kind {
         name: "pig",
@@ -178,6 +216,7 @@ const KINDS: &[Kind] = &[
         burns_by_day: false,
         weight: 100,
         neutral: false,
+        defends: false,
     },
     Kind {
         name: "cow",
@@ -189,6 +228,7 @@ const KINDS: &[Kind] = &[
         burns_by_day: false,
         weight: 100,
         neutral: false,
+        defends: false,
     },
     Kind {
         name: "sheep",
@@ -200,6 +240,7 @@ const KINDS: &[Kind] = &[
         burns_by_day: false,
         weight: 100,
         neutral: false,
+        defends: false,
     },
     Kind {
         name: "chicken",
@@ -211,6 +252,7 @@ const KINDS: &[Kind] = &[
         burns_by_day: false,
         weight: 100,
         neutral: false,
+        defends: false,
     },
 ];
 
@@ -324,6 +366,16 @@ fn think(server: &Arc<Server>, tick: u64) {
 
         let mut goal: Option<(f64, f64, f64)> = None;
         let mut attacked = false;
+        // A golem looks for something to see off rather than for a player.
+        if kind.defends {
+            if let Some((target, x, y, z)) = nearest_hostile(server, &mob) {
+                goal = Some((x, y, z));
+                let distance = ((mob.x - x).powi(2) + (mob.y - y).powi(2) + (mob.z - z).powi(2)).sqrt();
+                if distance <= REACH + 0.6 {
+                    attacked = strike_mob(server, &mob, kind, target);
+                }
+            }
+        }
         // One that keeps to itself only joins in once it has been hit.
         let minding_its_own = kind.neutral && mob.provoked_until <= tick;
         if kind.hostile && !minding_its_own {
@@ -474,6 +526,31 @@ fn path_for(server: &Arc<Server>, mob: &Entity, goal: BlockPos, tick: u64, budge
         stored.path = path;
     }
     next
+}
+
+/// The nearest thing a golem would object to.
+fn nearest_hostile(server: &Arc<Server>, golem: &Entity) -> Option<(i32, f64, f64, f64)> {
+    let entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
+    entities
+        .by_id
+        .values()
+        .filter(|other| other.health > 0.0 && kind_of(&other.kind).is_some_and(|kind| kind.hostile && !kind.neutral))
+        .map(|other| {
+            let distance = ((golem.x - other.x).powi(2) + (golem.y - other.y).powi(2) + (golem.z - other.z).powi(2)).sqrt();
+            (distance, other.id, other.x, other.y, other.z)
+        })
+        .filter(|(distance, ..)| *distance <= SIGHT)
+        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(_, id, x, y, z)| (id, x, y, z))
+}
+
+/// A golem hits a mob, and sends it flying the way one does.
+fn strike_mob(server: &Arc<Server>, golem: &Entity, kind: &Kind, target: i32) -> bool {
+    if golem.attack_cooldown > 0 || kind.damage <= 0.0 {
+        return false;
+    }
+    crate::survival::damage_entity_directly(server, target, kind.damage, (golem.x, golem.z));
+    true
 }
 
 /// A skeleton looses an arrow, if it has waited long enough and can see
