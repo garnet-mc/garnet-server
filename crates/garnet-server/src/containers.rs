@@ -42,6 +42,8 @@ pub enum Kind {
     Anvil,
     /// On the player: something to enchant and the lapis to pay with.
     Enchanting,
+    /// On the player: what a villager is being offered for what it sells.
+    Merchant,
 }
 
 /// The containers we know how to open, and how big they are. Ender chests
@@ -219,6 +221,7 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
         Kind::Brewing => crate::brewing::state(server, open.pos).items,
         Kind::Anvil => player.lock().anvil.clone(),
         Kind::Enchanting => player.lock().enchanting.clone(),
+        Kind::Merchant => player.lock().trading.clone(),
     };
     {
         let s = player.lock();
@@ -226,6 +229,12 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
         slots.extend(s.inventory.slots[HOTBAR_START..HOTBAR_START + 9].iter().cloned());
     }
     let mut cursor = player.lock().inventory.cursor.clone();
+    // A villager hands over what it sells itself, as an anvil does.
+    if open.kind == Kind::Merchant && click.slot == crate::villagers::RESULT as i16 {
+        crate::villagers::take(server, player);
+        crate::villagers::refresh(server, player);
+        return;
+    }
     // An anvil hands its result over itself, so the usual click logic
     // never sees that slot.
     if open.kind == Kind::Anvil && click.slot == crate::anvil::RESULT as i16 {
@@ -255,6 +264,7 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
         Kind::Brewing => crate::brewing::touched(server, open.pos, block_items.to_vec()),
         Kind::Anvil => player.lock().anvil = block_items.to_vec(),
         Kind::Enchanting => player.lock().enchanting = block_items.to_vec(),
+        Kind::Merchant => player.lock().trading = block_items.to_vec(),
     }
     {
         let mut s = player.lock();
@@ -272,6 +282,10 @@ pub fn click(server: &Arc<Server>, player: &Arc<Player>, click: ContainerClick) 
     }
     if open.kind == Kind::Enchanting {
         crate::enchanting::refresh(server, player);
+        return;
+    }
+    if open.kind == Kind::Merchant {
+        crate::villagers::refresh(server, player);
         return;
     }
     send_content(server, player, block_items);
@@ -423,6 +437,13 @@ pub fn close(server: &Arc<Server>, player: &Arc<Player>) {
             let grid = std::mem::take(&mut s.crafting);
             drop(s);
             left.extend(grid.into_iter().skip(1).filter(|stack| !stack.is_empty()));
+        }
+        Some(Kind::Merchant) => {
+            let mut s = player.lock();
+            let slots = std::mem::take(&mut s.trading);
+            s.trading_with = None;
+            drop(s);
+            left.extend(slots.into_iter().take(crate::villagers::RESULT).filter(|stack| !stack.is_empty()));
         }
         Some(Kind::Enchanting) => {
             let mut s = player.lock();

@@ -49,6 +49,7 @@ mod rules;
 mod server;
 mod survival;
 mod vanilla_commands;
+mod villagers;
 mod world_entities;
 
 use crate::config::GarnetConfig;
@@ -193,6 +194,7 @@ async fn async_main(cli: Cli) -> Result<()> {
             recipes: recipes::Recipes::load(&data),
             enchantments: enchanting::Enchantments::load(&data),
             brewing: brewing::Brewing::load(&data),
+            trades: villagers::Trades::load(&data),
             stands: brewing::Stands::new(),
             mob_loot: loot::LootTables::entities(&data),
             furnaces: furnaces::Furnaces::new(),

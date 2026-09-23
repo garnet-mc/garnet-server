@@ -112,6 +112,11 @@ pub struct PlayerState {
     pub enchant_seed: i64,
     /// When this player started drawing a bow.
     pub drawing_since: Option<u64>,
+    /// The counter of the villager this player is trading with: what has
+    /// been put down, which of them is being sold, and whose shop it is.
+    pub trading: Vec<garnet_protocol::packets::play::items::ItemStack>,
+    pub trade_index: usize,
+    pub trading_with: Option<i32>,
     pub next_window_id: i32,
     /// Non-player entities this client has been shown.
     pub visible_entities: HashSet<i32>,
@@ -216,6 +221,9 @@ impl Player {
                 enchanting: Vec::new(),
                 enchant_seed: 0,
                 drawing_since: None,
+                trading: Vec::new(),
+                trade_index: 0,
+                trading_with: None,
                 next_window_id: 0,
                 visible_entities: HashSet::new(),
             }),

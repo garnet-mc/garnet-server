@@ -9,14 +9,15 @@ growing crops, flowing water and lava, redstone from wire and torches
 through comparators, observers, pistons and TNT, hoppers, experience
 and tools that wear out, anvils, enchanting tables and brewing stands,
 bows and the rest of what flies, zombies and their cousins, skeletons,
-creepers, witches, endermen that keep to themselves, mobs that find
+creepers, witches, endermen that keep to themselves, villagers that
+take up a trade, mobs that find
 their way round what is in it, a dawn that burns the undead, animals
 that breed and shear and follow the food, saves, mods, the admin panel,
 voice relaying and anti-cheat.
 
 What comes next, roughly in order:
 
-1. **Villagers** – the one part of the cast with a job: trading, professions, and the workstations that give them one (the hostiles, the neutrals and the four farm animals are all in).
+1. **Villages** – villagers trade and take up jobs, but nobody builds them a home: beds they claim, doors they shut, iron golems, raids, and gossip about who has been stealing the crops.
 2. **The rest of the workbenches** – the stonecutter, the grindstone and the smithing table (chests, the crafting grid, furnaces, anvils, enchanting tables and brewing stands are done).
 3. **Rails and minecarts** – and the rest of what rides them (hoppers and the rest of redstone are done: wire, torches, levers, buttons, plates, repeaters, comparators, observers, pistons, dispensers, droppers, note blocks, lamps, doors and TNT).
 3. **More mobs** – skeletons and creepers want arrows and explosions first, and everything wants proper pathfinding, sounds and experience orbs.

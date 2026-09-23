@@ -248,6 +248,19 @@ impl ServerboundPacket for Attack {
     }
 }
 
+/// Which of a villager's trades the player is looking at.
+pub struct SelectTrade {
+    pub index: i32,
+}
+
+impl ServerboundPacket for SelectTrade {
+    const NAME: &'static str = "select_trade";
+    const STATE: State = State::Play;
+    fn read(r: &mut PacketReader) -> Result<Self> {
+        Ok(Self { index: r.read_varint()? })
+    }
+}
+
 /// A button inside a window: one of an enchanting table's three offers,
 /// or a page of a villager's trades.
 pub struct ContainerButtonClick {

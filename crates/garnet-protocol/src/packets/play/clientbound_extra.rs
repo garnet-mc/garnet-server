@@ -630,6 +630,71 @@ impl ClientboundPacket for ContainerClose {
 }
 
 /// Shoves an entity: knockback, and anything else that throws a player.
+/// What one trade costs and gives.
+pub struct MerchantOffer {
+    /// The first thing wanted: item id and how many.
+    pub wants: (i32, i32),
+    /// A second thing wanted, for the trades that ask for two.
+    pub also_wants: Option<(i32, i32)>,
+    pub gives: crate::packets::play::items::ItemStack,
+    pub uses: i32,
+    pub max_uses: i32,
+    pub xp: i32,
+    /// What the villager's opinion of this player does to the price.
+    pub discount: i32,
+    pub price_multiplier: f32,
+    pub demand: i32,
+}
+
+/// The trades a villager is offering, and how far along it is.
+pub struct MerchantOffers {
+    pub window_id: i32,
+    pub offers: Vec<MerchantOffer>,
+    pub level: i32,
+    pub xp: i32,
+    /// Whether the client draws the level bar at all.
+    pub show_progress: bool,
+    pub can_restock: bool,
+}
+
+impl ClientboundPacket for MerchantOffers {
+    const NAME: &'static str = "merchant_offers";
+    const STATE: State = State::Play;
+    fn write(&self, w: &mut PacketWriter) {
+        w.write_varint(self.window_id);
+        w.write_varint(self.offers.len() as i32);
+        for offer in &self.offers {
+            write_cost(w, offer.wants);
+            offer.gives.write(w);
+            match offer.also_wants {
+                Some(cost) => {
+                    w.write_bool(true);
+                    write_cost(w, cost);
+                }
+                None => w.write_bool(false),
+            }
+            w.write_bool(offer.uses >= offer.max_uses);
+            w.write_i32(offer.uses);
+            w.write_i32(offer.max_uses);
+            w.write_i32(offer.xp);
+            w.write_i32(offer.discount);
+            w.write_f32(offer.price_multiplier);
+            w.write_i32(offer.demand);
+        }
+        w.write_varint(self.level);
+        w.write_varint(self.xp);
+        w.write_bool(self.show_progress);
+        w.write_bool(self.can_restock);
+    }
+}
+
+/// An item and a count, with no component conditions on it.
+fn write_cost(w: &mut PacketWriter, cost: (i32, i32)) {
+    w.write_varint(cost.0);
+    w.write_varint(cost.1);
+    w.write_varint(0); // no components are required of it
+}
+
 /// One of the effects the client knows how to play by number: a potion
 /// breaking, a door opening, a dispenser going off.
 pub struct LevelEvent {

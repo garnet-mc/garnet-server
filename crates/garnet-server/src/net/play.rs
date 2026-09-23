@@ -406,6 +406,10 @@ pub async fn handle(server: &Arc<Server>, player: &Arc<Player>, name: &str, r: &
                 crate::containers::click(server, player, p);
             }
         }
+        "select_trade" => {
+            let p = sb::SelectTrade::read(r)?;
+            crate::villagers::select(server, player, p.index);
+        }
         "container_button_click" => {
             let p = sb::ContainerButtonClick::read(r)?;
             let open = player.lock().container.clone();
@@ -474,7 +478,18 @@ pub async fn handle(server: &Arc<Server>, player: &Arc<Player>, name: &str, r: &
             if let Some(pos) = target {
                 let creative = player.lock().game_mode == GameMode::Creative;
                 if server.anticheat.check_reach(eyes, (pos.0 as i32, pos.1 as i32, pos.2 as i32), creative).is_none() {
-                    crate::animals::interact(server, player, p.entity_id);
+                    let villager = {
+                        let entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
+                        entities.by_id.get(&p.entity_id).filter(|e| e.kind == "minecraft:villager").cloned()
+                    };
+                    match villager {
+                        Some(entity) => {
+                            crate::villagers::open(server, player, &entity);
+                        }
+                        None => {
+                            crate::animals::interact(server, player, p.entity_id);
+                        }
+                    }
                 }
             }
         }

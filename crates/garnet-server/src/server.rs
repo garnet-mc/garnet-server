@@ -88,6 +88,8 @@ pub struct Server {
     pub furnaces: crate::furnaces::Furnaces,
     /// What a brewing stand can make of what is in it.
     pub brewing: crate::brewing::Brewing,
+    /// What villagers will trade, by profession and level.
+    pub trades: crate::villagers::Trades,
     /// The brewing stands that are currently working.
     pub stands: crate::brewing::Stands,
     /// Blocks waiting for their turn: a button to pop out, sand to fall.
@@ -556,6 +558,8 @@ impl Server {
             crate::brewing::tick(&self);
             self.doing("animals");
             crate::animals::tick(&self, tick);
+            self.doing("villagers");
+            crate::villagers::tick(&self, tick);
             self.doing("blocks");
             crate::blocks::tick(&self, tick);
             self.doing("explosions");

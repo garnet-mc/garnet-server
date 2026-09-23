@@ -118,7 +118,9 @@ pub fn extract_datapack(inner_jar: &Path, target_dir: &Path) -> Result<()> {
         let is_recipe = after_ns.starts_with("/recipe/");
         // Brewing fuel points at these for how many brews it is worth.
         let is_provider = after_ns.starts_with("/context_int_provider/") || after_ns.starts_with("/context_float_provider/");
-        if !is_tag && !is_registry && !is_block_loot && !is_recipe && !is_provider {
+        // What villagers will trade you, which 26.3 writes down at last.
+        let is_trade = after_ns.starts_with("/villager_trade/");
+        if !is_tag && !is_registry && !is_block_loot && !is_recipe && !is_provider && !is_trade {
             continue;
         }
         let out_path = target_dir.join(name.trim_start_matches("data/"));

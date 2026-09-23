@@ -61,6 +61,8 @@ pub struct Entity {
     pub animal: Option<crate::animals::Animal>,
     /// Until when a mob that keeps to itself is cross with someone.
     pub provoked_until: u64,
+    /// A villager's job, and what it will trade.
+    pub villager: Option<crate::villagers::Villager>,
 }
 
 impl Entity {
@@ -234,6 +236,7 @@ pub fn new_entity(server: &Server, kind: &str, x: f64, y: f64, z: f64) -> Option
         path: None,
         animal: None,
         provoked_until: 0,
+        villager: None,
     })
 }
 
@@ -666,6 +669,9 @@ fn to_nbt(server: &Server, e: &Entity) -> NbtCompound {
             c.put("Age", e.age as i32);
         }
     }
+    if let Some(villager) = &e.villager {
+        crate::villagers::to_nbt(server, villager, server.current_tick(), &mut c);
+    }
     c.put("PickupDelay", e.pickup_delay as i16 as i32);
     c.put("NoGravity", e.no_gravity);
     if let Some(name) = &e.custom_name {
@@ -703,6 +709,9 @@ fn from_nbt(server: &Server, c: &NbtCompound) -> Option<Entity> {
     e.on_ground = c.get_bool("OnGround").unwrap_or(false);
     e.health = c.get_f64("Health").map(|h| h as f32).unwrap_or(20.0);
     e.age = c.get_i32("Age").unwrap_or(0).max(0) as u32;
+    if kind == "minecraft:villager" {
+        e.villager = crate::villagers::from_nbt(server, c, server.current_tick());
+    }
     if crate::animals::is_animal(kind) {
         let now = server.current_tick();
         let age = c.get_i32("Age").unwrap_or(0);

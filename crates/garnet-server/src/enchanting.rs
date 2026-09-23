@@ -129,13 +129,13 @@ impl Enchantments {
         self.all.iter().find(|e| e.id == id)
     }
 
-    /// What this item could be given at this much enchanting power: the
-    /// highest level of each enchantment whose window the power falls in.
-    fn results(&self, server: &Arc<Server>, item: &str, power: i32) -> Vec<(Enchantment, i32)> {
-        // A book takes anything the table knows; everything else only what
+    /// The same, drawing from whichever set of enchantments is named: a
+    /// table has its own, and so does what a villager sells.
+    fn results_from(&self, server: &Arc<Server>, item: &str, power: i32, tag: &str) -> Vec<(Enchantment, i32)> {
+        // A book takes anything the set holds; everything else only what
         // it is the proper item for.
         let book = item == "minecraft:book";
-        let offered = server.data.tags.members("minecraft:enchantment", TABLE_TAG);
+        let offered = server.data.tags.members("minecraft:enchantment", tag.strip_prefix('#').unwrap_or(tag));
         let mut out = Vec::new();
         for enchantment in &self.all {
             if let Some(offered) = offered {
@@ -344,8 +344,20 @@ fn costs(server: &Arc<Server>, item: &str, shelves: i32, seed: i64) -> [i32; 3] 
     out
 }
 
+impl Enchantments {
+    /// Rolls enchantments for something that is not coming off a table:
+    /// gear a villager sells, say. `options` names the set to draw from.
+    pub fn roll_for(&self, server: &Arc<Server>, item: &str, level: i32, options: &str, seed: i64) -> Vec<(i32, i32)> {
+        roll_with(server, item, level, options, seed)
+    }
+}
+
 /// Rolls what one offer actually gives.
 fn roll(server: &Arc<Server>, item: &str, cost: i32, seed: i64) -> Vec<(i32, i32)> {
+    roll_with(server, item, cost, TABLE_TAG, seed)
+}
+
+fn roll_with(server: &Arc<Server>, item: &str, cost: i32, tag: &str, seed: i64) -> Vec<(i32, i32)> {
     let enchantability = server.data.item_components.enchantable(item);
     if enchantability <= 0 || cost <= 0 {
         return Vec::new();
@@ -358,7 +370,7 @@ fn roll(server: &Arc<Server>, item: &str, cost: i32, seed: i64) -> Vec<(i32, i32
     let spread = (rolls.float() + rolls.float() - 1.0) * 0.15;
     power = ((power as f32 + power as f32 * spread).round() as i32).max(1);
 
-    let mut available = server.enchantments.results(server, item, power);
+    let mut available = server.enchantments.results_from(server, item, power, tag);
     let mut chosen: Vec<(Enchantment, i32)> = Vec::new();
     let Some(first) = weighted(&mut rolls, &mut available) else {
         return Vec::new();
