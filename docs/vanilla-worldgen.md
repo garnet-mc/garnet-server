@@ -43,12 +43,12 @@ same seed, and compare the chunks block for block.
    code rather than in the data pack, so it is dumped once with the oracle
    (`Biomes.java`) into `crates/garnet-world/data/overworld_biomes.json`
    and read from there. Dump it again on a version bump.
-4. **Terrain** -- the density that decides rock from air is done and
-   checked: `final_density` and every piece under it -- the old blended
-   noise the land is shaped by, the slope and factor over it, the cell
-   interpolation, and all the caves. What is left before a chunk can be
-   filled is the aquifer, which turns that density into stone, water, air
-   or lava, and then writing the blocks.
+4. **Terrain** -- done as far as the blocks go. `vanilla::density` works
+   out where the rock is and `vanilla::aquifer` what fills the rest, and
+   together they put the same stone, water and air in a column as the game
+   does, checked top to bottom. What is left of a chunk is the dressing:
+   the surface rules that decide grass over dirt, the carvers that cut
+   caves and ravines, and then the features.
 5. **Surface** -- the surface rule tree, also data, which decides grass
    over dirt over stone, sand in deserts, and so on.
 6. **Carvers and features** -- caves and ravines, then ores, trees, lakes

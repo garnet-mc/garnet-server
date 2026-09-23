@@ -18,6 +18,11 @@ use std::sync::Arc;
 /// Where the game keeps the noises and the functions that read them.
 pub struct Graph {
     functions: HashMap<String, Arc<Node>>,
+    /// The files and noises it was built from, kept so that a function
+    /// written inline somewhere else -- in the noise settings, say -- can
+    /// be read against the same graph.
+    files: HashMap<String, Value>,
+    noises: HashMap<String, Arc<Normal>>,
     /// The random source the old terrain noise draws its octaves from.
     terrain_random: Xoroshiro,
 }
@@ -101,6 +106,20 @@ pub enum Node {
         thresholds: Vec<f32>,
         choices: Vec<Arc<Node>>,
     },
+    /// How high the ground stands in a column: the highest step at which
+    /// the rock is still solid, searched downwards.
+    FindTopSurface {
+        density: Arc<Node>,
+        upper_bound: Arc<Node>,
+        lower_bound: i32,
+        step: i32,
+    },
+    /// Reads another function at a fixed height, whatever height is asked
+    /// for.
+    Slice {
+        input: Arc<Node>,
+        y: i32,
+    },
     /// Blending with an older world, of which there is none here: the
     /// alpha is all the way over and the offset is nothing.
     BlendAlpha,
@@ -143,6 +162,8 @@ impl Graph {
         collect_files(&root, &root, &mut files);
         let mut graph = Self {
             functions: HashMap::new(),
+            files: files.clone(),
+            noises: noises.clone(),
             terrain_random: Xoroshiro::from_seed(seed).fork_positional().from_hash_of("minecraft:terrain"),
         };
         let names: Vec<String> = files.keys().cloned().collect();
@@ -156,6 +177,14 @@ impl Graph {
     /// One function by name, such as `minecraft:overworld/temperature`.
     pub fn function(&self, name: &str) -> Option<Arc<Node>> {
         self.functions.get(name).cloned()
+    }
+
+    /// A function written out where it is used rather than named: the
+    /// ones in the noise settings, for instance.
+    pub fn inline(&mut self, json: &Value) -> Arc<Node> {
+        let files = self.files.clone();
+        let noises = self.noises.clone();
+        Arc::new(self.parse(json, &files, &noises, 0))
     }
 
     fn build(
@@ -314,6 +343,16 @@ impl Graph {
                     choices,
                 }
             }
+            "find_top_surface" => Node::FindTopSurface {
+                density: child(self, "density"),
+                upper_bound: child(self, "upper_bound"),
+                lower_bound: number("lower_bound", -64.0) as i32,
+                step: number("cell_height", 8.0) as i32,
+            },
+            "slice" => Node::Slice {
+                input: child(self, "input"),
+                y: number("y", 0.0) as i32,
+            },
             "blend_alpha" => Node::BlendAlpha,
             "blend_offset" => Node::BlendOffset,
             other => Node::Unsupported(other.to_owned()),
@@ -493,6 +532,29 @@ impl Node {
                     None => 0.0,
                 }
             }
+            Node::FindTopSurface {
+                density,
+                upper_bound,
+                lower_bound,
+                step,
+            } => {
+                // The search starts at the highest the ground could be and
+                // steps down until the rock is solid.
+                let upper = upper_bound.sample(x, y, z);
+                let top = (upper / *step as f32).floor() as i32 * step;
+                if top <= *lower_bound {
+                    return *lower_bound as f32;
+                }
+                let mut probe = top;
+                while probe >= *lower_bound {
+                    if density.sample(x, probe, z) > 0.0 {
+                        return probe as f32;
+                    }
+                    probe -= step;
+                }
+                *lower_bound as f32
+            }
+            Node::Slice { input, y: at } => input.sample(x, *at, z),
             // There is no older world to blend with here.
             Node::BlendAlpha => 1.0,
             Node::BlendOffset => 0.0,
