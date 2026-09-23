@@ -32,15 +32,22 @@ same seed, and compare the chunks block for block.
    forks that hand a named or placed generator its own stream. Note 26.3
    works its doubles and floats out in single precision, constant and all;
    getting that wrong moves every number downstream.
-2. **Noise** -- the gradient noise, the octave stack over it, and the
-   normal noise that pairs two of them. 26.3 rewrote these in floats with
-   its own buffer types, so the shape differs from what is written up for
-   1.21 elsewhere.
-3. **Climate and biomes** -- six noises (temperature, vegetation,
-   continentalness, erosion, depth, weirdness) and the parameter list in
-   the data pack that says which biome each corner of that space is.
-4. **Terrain** -- the density function graph, which the data pack holds in
-   full: an interpreter for it, then the noise settings for the overworld.
+2. **Noise** -- done. `vanilla::noise`: the gradient noise, the octave
+   stack over it, and the normal noise that pairs two of them. 26.3 wrote
+   these in floats, so the shape differs from what is written up for 1.21
+   elsewhere.
+3. **Climate and biomes** -- done for reading a biome at a place.
+   `vanilla::density` reads the data pack's function graph; `vanilla::climate`
+   samples the six climate values from it and finds the nearest biome.
+   The table of which biome wants which climate is kept in the game's own
+   code rather than in the data pack, so it is dumped once with the oracle
+   (`Biomes.java`) into `crates/garnet-world/data/overworld_biomes.json`
+   and read from there. Dump it again on a version bump.
+4. **Terrain** -- the same function graph, read over a whole chunk at a
+   time, plus the noise settings for the overworld: where the rock is.
+   The interpreter is there; what is missing is the handful of heavier
+   node types terrain uses (blended noise, the caves, ore veins) and
+   reading a volume rather than a point.
 5. **Surface** -- the surface rule tree, also data, which decides grass
    over dirt over stone, sand in deserts, and so on.
 6. **Carvers and features** -- caves and ravines, then ores, trees, lakes

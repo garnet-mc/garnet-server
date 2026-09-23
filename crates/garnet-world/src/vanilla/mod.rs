@@ -5,5 +5,7 @@
 //! holds the little program that prints the reference numbers the tests
 //! here are written against.
 
+pub mod climate;
+pub mod density;
 pub mod noise;
 pub mod rng;
