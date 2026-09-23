@@ -43,11 +43,12 @@ same seed, and compare the chunks block for block.
    code rather than in the data pack, so it is dumped once with the oracle
    (`Biomes.java`) into `crates/garnet-world/data/overworld_biomes.json`
    and read from there. Dump it again on a version bump.
-4. **Terrain** -- the same function graph, read over a whole chunk at a
-   time, plus the noise settings for the overworld: where the rock is.
-   The interpreter is there; what is missing is the handful of heavier
-   node types terrain uses (blended noise, the caves, ore veins) and
-   reading a volume rather than a point.
+4. **Terrain** -- the density that decides rock from air is done and
+   checked: `final_density` and every piece under it -- the old blended
+   noise the land is shaped by, the slope and factor over it, the cell
+   interpolation, and all the caves. What is left before a chunk can be
+   filled is the aquifer, which turns that density into stone, water, air
+   or lava, and then writing the blocks.
 5. **Surface** -- the surface rule tree, also data, which decides grass
    over dirt over stone, sand in deserts, and so on.
 6. **Carvers and features** -- caves and ravines, then ores, trees, lakes

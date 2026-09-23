@@ -7,7 +7,8 @@
 //! wants the same graph read over a whole volume at once, which will come
 //! later; the shapes here are the ones the game uses either way.
 
-use super::noise::{Normal, Parameters};
+use super::noise::lerp3;
+use super::noise::{Blended, Normal, Parameters};
 use super::rng::Xoroshiro;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -17,6 +18,8 @@ use std::sync::Arc;
 /// Where the game keeps the noises and the functions that read them.
 pub struct Graph {
     functions: HashMap<String, Arc<Node>>,
+    /// The random source the old terrain noise draws its octaves from.
+    terrain_random: Xoroshiro,
 }
 
 /// One node of a density function.
@@ -81,6 +84,23 @@ pub enum Node {
         in_range: Arc<Node>,
         out_of_range: Arc<Node>,
     },
+    /// The older terrain noise, which the overworld is still shaped by.
+    OldBlended(Arc<Blended>),
+    /// A value taken at the corners of a cell and read between, which is
+    /// what keeps the terrain smooth between the points it is worked out
+    /// at.
+    Interpolated {
+        input: Arc<Node>,
+        cell_xz: i32,
+        cell_y: i32,
+    },
+    /// Picks one of several by which band the input falls in: the first
+    /// whose threshold the input is under, or the last.
+    IntervalSelect {
+        input: Arc<Node>,
+        thresholds: Vec<f32>,
+        choices: Vec<Arc<Node>>,
+    },
     /// Blending with an older world, of which there is none here: the
     /// alpha is all the way over and the offset is nothing.
     BlendAlpha,
@@ -123,6 +143,7 @@ impl Graph {
         collect_files(&root, &root, &mut files);
         let mut graph = Self {
             functions: HashMap::new(),
+            terrain_random: Xoroshiro::from_seed(seed).fork_positional().from_hash_of("minecraft:terrain"),
         };
         let names: Vec<String> = files.keys().cloned().collect();
         for name in names {
@@ -252,8 +273,46 @@ impl Graph {
             }
             // Cached values are the same values; the caching is only there
             // to save the game work.
-            "cache" | "interpolated" | "flat_cache" | "cache_2d" | "cache_once" | "cache_all_in_cell" | "blend_density" => {
+            "cache" | "flat_cache" | "cache_2d" | "cache_once" | "cache_all_in_cell" | "blend_density" => {
                 Node::Reference(child(self, "input"))
+            }
+            "old_blended_noise" => {
+                // One random source of its own, named for the terrain.
+                let mut random = self.terrain_random.clone();
+                Node::OldBlended(Arc::new(Blended::new(
+                    &mut random,
+                    number("xz_scale", 1.0),
+                    number("y_scale", 1.0),
+                    number("xz_factor", 80.0),
+                    number("y_factor", 160.0),
+                    number("smear_scale_multiplier", 8.0),
+                )))
+            }
+            "interpolated" => Node::Interpolated {
+                input: child(self, "input"),
+                cell_xz: number("cell_size_xz", 4.0) as i32,
+                cell_y: number("cell_size_y", 8.0) as i32,
+            },
+            "interval_select" => {
+                let thresholds: Vec<f32> = json
+                    .get("thresholds")
+                    .and_then(Value::as_array)
+                    .map(|list| list.iter().filter_map(Value::as_f64).map(|v| v as f32).collect())
+                    .unwrap_or_default();
+                let choices: Vec<Arc<Node>> = json
+                    .get("functions")
+                    .and_then(Value::as_array)
+                    .map(|list| {
+                        list.iter()
+                            .map(|value| Arc::new(self.parse(value, files, noises, depth + 1)))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Node::IntervalSelect {
+                    input: child(self, "input"),
+                    thresholds,
+                    choices,
+                }
             }
             "blend_alpha" => Node::BlendAlpha,
             "blend_offset" => Node::BlendOffset,
@@ -396,6 +455,44 @@ impl Node {
                     out_of_range.sample(x, y, z)
                 }
             }
+            Node::OldBlended(noise) => noise.get(x as f64, y as f64, z as f64),
+            Node::Interpolated { input, cell_xz, cell_y } => {
+                let (in_x, in_y, in_z) = (x.rem_euclid(*cell_xz), y.rem_euclid(*cell_y), z.rem_euclid(*cell_xz));
+                if in_x == 0 && in_y == 0 && in_z == 0 {
+                    return input.sample(x, y, z);
+                }
+                // The eight corners of the cell this block sits in.
+                let (x0, y0, z0) = (x - in_x, y - in_y, z - in_z);
+                let corner = |dx: i32, dy: i32, dz: i32| input.sample(x0 + dx * cell_xz, y0 + dy * cell_y, z0 + dz * cell_xz);
+                lerp3(
+                    in_x as f32 / *cell_xz as f32,
+                    in_y as f32 / *cell_y as f32,
+                    in_z as f32 / *cell_xz as f32,
+                    corner(0, 0, 0),
+                    corner(1, 0, 0),
+                    corner(0, 1, 0),
+                    corner(1, 1, 0),
+                    corner(0, 0, 1),
+                    corner(1, 0, 1),
+                    corner(0, 1, 1),
+                    corner(1, 1, 1),
+                )
+            }
+            Node::IntervalSelect {
+                input,
+                thresholds,
+                choices,
+            } => {
+                let value = input.sample(x, y, z);
+                let index = thresholds
+                    .iter()
+                    .position(|threshold| value < *threshold)
+                    .unwrap_or(choices.len().saturating_sub(1));
+                match choices.get(index) {
+                    Some(choice) => choice.sample(x, y, z),
+                    None => 0.0,
+                }
+            }
             // There is no older world to blend with here.
             Node::BlendAlpha => 1.0,
             Node::BlendOffset => 0.0,
@@ -497,6 +594,89 @@ fn collect_files(root: &Path, dir: &Path, out: &mut HashMap<String, Value>) {
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
         if let Ok(json) = serde_json::from_str::<Value>(&text) {
             out.insert(name, json);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn datapack() -> Option<std::path::PathBuf> {
+        let base = std::env::var("GARNET_DATA").ok()?;
+        let candidate = std::path::PathBuf::from(base).join("versions/26.3/datapack");
+        candidate
+            .join("minecraft/worldgen/density_function/overworld/final_density.json")
+            .exists()
+            .then_some(candidate)
+    }
+
+    /// Each piece the terrain is built from, against the game's own
+    /// numbers: the old noise the land is shaped by, the slope and the
+    /// factor over it, and every one of the caves.
+    #[test]
+    fn each_piece_of_the_terrain_matches() {
+        let Some(datapack) = datapack() else {
+            eprintln!("no prepared data pack found; skipping");
+            return;
+        };
+        let graph = Graph::load(&datapack, 1234567890123);
+        let points = [(0, 64, 0), (0, 8, 0), (100, 72, -250), (5000, 90, 5000)];
+        let expected: &[(&str, [f32; 4])] = &[
+            ("overworld/base_3d_noise", [0.018798314, 0.015147924, 0.087911874, -0.2507416]),
+            ("overworld/sloped_cheese", [-0.519929, 8.014228, 0.15161897, -1.541898]),
+            ("overworld/factor", [5.8022795, 5.8022795, 1.56, 3.95]),
+            ("overworld/jaggedness", [0.0, 0.0, 0.0, 0.0]),
+            ("overworld/caves/entrances", [0.24991971, 0.19658692, 0.16984817, 0.28046948]),
+            ("overworld/caves/noodle", [0.8114858, 64.0, 0.5812746, 64.0]),
+            (
+                "overworld/caves/pillars",
+                [-0.027588854, -0.011000095, -0.30190367, 0.0089318855],
+            ),
+            ("overworld/caves/spaghetti_2d", [1.0, 1.0, 1.0, 1.0]),
+            (
+                "overworld/caves/spaghetti_roughness_function",
+                [0.01405247, -8.3049096e-4, 0.01739272, 0.009900187],
+            ),
+        ];
+        for (name, wants) in expected {
+            let node = graph.function(&format!("minecraft:{name}")).expect(name);
+            for ((x, y, z), want) in points.iter().zip(wants.iter()) {
+                let got = node.sample(*x, *y, *z);
+                assert!((got - want).abs() < 1e-4, "{name} at {x},{y},{z}: {got} vs {want}");
+            }
+        }
+    }
+
+    /// What the game's own functions come to at six places, against what
+    /// this makes of the same graph. `final_density` is the one that
+    /// decides rock from air, and it stands on all the others.
+    #[test]
+    fn terrain_density_matches_the_game() {
+        let Some(datapack) = datapack() else {
+            eprintln!("no prepared data pack found; skipping");
+            return;
+        };
+        let graph = Graph::load(&datapack, 1234567890123);
+        let function = |name: &str| graph.function(name).expect(name);
+        let expected: &[(i32, i32, i32, f32, f32, f32, f32, f32)] = &[
+            (0, 64, 0, -0.16484208, -0.092847526, 0.22936258, 0.4857032, -0.052071746),
+            (0, 8, 0, 0.06282483, 0.34465247, 0.22936258, 0.4857032, -0.052071746),
+            (100, 72, -250, 0.046571, 0.010209471, 0.6648526, 0.24994996, 0.7398364),
+            (-1500, 40, 3000, 0.019839544, 0.48917407, 1.0020655, -0.1732395, -0.40692088),
+            (5000, 90, 5000, -0.4466196, -0.32687503, -0.3896563, -0.27823895, 0.064396665),
+            (37, 120, -412, -0.45833334, -0.46871346, 0.64894825, 0.051453687, -0.038865805),
+        ];
+        for (x, y, z, final_density, depth, continents, erosion, ridges) in expected {
+            let check = |name: &str, want: f32| {
+                let got = function(name).sample(*x, *y, *z);
+                assert!((got - want).abs() < 1e-5, "{name} at {x},{y},{z}: {got} vs {want}");
+            };
+            check("minecraft:overworld/depth", *depth);
+            check("minecraft:overworld/continents", *continents);
+            check("minecraft:overworld/erosion", *erosion);
+            check("minecraft:overworld/ridges", *ridges);
+            check("minecraft:overworld/final_density", *final_density);
         }
     }
 }

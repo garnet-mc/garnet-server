@@ -55,7 +55,7 @@ fn lerp2(a1: f32, a2: f32, x00: f32, x10: f32, x01: f32, x11: f32) -> f32 {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn lerp3(
+pub(super) fn lerp3(
     a1: f32,
     a2: f32,
     a3: f32,
@@ -116,7 +116,28 @@ impl Perlin {
         let z = wrap(z) + self.offset.2;
         let (fx, fy, fz) = (x.floor() as i32, y.floor() as i32, z.floor() as i32);
         let (rx, ry, rz) = ((x - fx as f64) as f32, (y - fy as f64) as f32, (z - fz as f64) as f32);
+        self.sample_and_lerp(fx, fy, fz, rx, ry, rz, ry)
+    }
 
+    /// The older terrain noise reads the same table, but steps its y in
+    /// blocks rather than smoothly: the gradients are taken at a stepped
+    /// height while the blend still runs on the true one, which is what
+    /// gives that terrain its terraces.
+    pub fn get_smeared(&self, x: f64, y: f64, z: f64, step: f64) -> f32 {
+        let wx = wrap(x) + self.offset.0;
+        let wy = wrap(y) + self.offset.1;
+        let wz = wrap(z) + self.offset.2;
+        let (fx, fy, fz) = (wx.floor() as i32, wy.floor() as i32, wz.floor() as i32);
+        let rx = (wx - fx as f64) as f32;
+        let relative_y = wy - fy as f64;
+        let rz = (wz - fz as f64) as f32;
+        let limit = if y >= 0.0 && y < relative_y { y } else { relative_y };
+        let stepped = (limit / step + 1.0e-7f32 as f64).floor() * step;
+        self.sample_and_lerp(fx, fy, fz, rx, (relative_y - stepped) as f32, rz, relative_y as f32)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn sample_and_lerp(&self, fx: i32, fy: i32, fz: i32, rx: f32, ry: f32, rz: f32, blend_y: f32) -> f32 {
         let x0 = self.permute(fx);
         let x1 = self.permute(fx + 1);
         let xy00 = self.permute(x0 + fy);
@@ -133,7 +154,7 @@ impl Perlin {
         let d111 = Self::grad_dot(self.permute(xy11 + fz + 1), rx - 1.0, ry - 1.0, rz - 1.0);
         lerp3(
             smoothstep(rx),
-            smoothstep(ry),
+            smoothstep(blend_y),
             smoothstep(rz),
             d000,
             d100,
@@ -277,6 +298,92 @@ fn normalization_factor(target_amplitude: f64, octaves: &[Octave]) -> f64 {
         return 0.0;
     }
     (target_amplitude * TARGET_DEVIATION) / (input_deviation * 2f64.sqrt())
+}
+
+/// The older terrain noise: three stacks of stepped gradient noise, two
+/// giving the outer limits of the land and one choosing between them.
+#[derive(Clone, Debug, Default)]
+pub struct Blended {
+    min_limit: Vec<(Perlin, f64, f32)>,
+    max_limit: Vec<(Perlin, f64, f32)>,
+    main: Vec<(Perlin, f64, f32)>,
+    /// How far apart the steps in y are, before each octave narrows them.
+    limit_step: f64,
+    main_step: f64,
+    xz_multiplier: f64,
+    y_multiplier: f64,
+    xz_factor: f64,
+    y_factor: f64,
+}
+
+/// What the old noise scales its coordinates by before reading them.
+const BASE_SCALE: f64 = 684.412;
+
+impl Blended {
+    /// Built from one random source, drawn on in order: the two limits
+    /// first, then the one that chooses between them.
+    pub fn new(random: &mut Xoroshiro, xz_scale: f64, y_scale: f64, xz_factor: f64, y_factor: f64, smear: f64) -> Self {
+        let xz_multiplier = BASE_SCALE * xz_scale;
+        let y_multiplier = BASE_SCALE * y_scale;
+        let limit_step = y_multiplier * smear;
+        let main_step = limit_step / y_factor;
+        let min_limit = fbm(random, -15, 0.99998474);
+        let max_limit = fbm(random, -15, 0.99998474);
+        let main = fbm(random, -7, 12.75);
+        Self {
+            min_limit,
+            max_limit,
+            main,
+            limit_step,
+            main_step,
+            xz_multiplier,
+            y_multiplier,
+            xz_factor,
+            y_factor,
+        }
+    }
+
+    pub fn get(&self, x: f64, y: f64, z: f64) -> f32 {
+        let stack = |layers: &[(Perlin, f64, f32)], step: f64, xz: f64, y_scale: f64| -> f32 {
+            let mut value = 0.0;
+            for (noise, frequency, amplitude) in layers {
+                // Each octave steps its y as finely as it is frequent.
+                value += amplitude
+                    * noise.get_smeared(
+                        x * xz * frequency,
+                        y * y_scale * frequency,
+                        z * xz * frequency,
+                        step * frequency,
+                    );
+            }
+            value
+        };
+        let min = stack(&self.min_limit, self.limit_step, self.xz_multiplier, self.y_multiplier);
+        let max = stack(&self.max_limit, self.limit_step, self.xz_multiplier, self.y_multiplier);
+        let main = stack(
+            &self.main,
+            self.main_step,
+            self.xz_multiplier / self.xz_factor,
+            self.y_multiplier / self.y_factor,
+        );
+        let choice = (main + 0.5).clamp(0.0, 1.0);
+        min + choice * (max - min)
+    }
+}
+
+/// One of the old noise's stacks: octaves from the finest up, each half
+/// the frequency and twice the weight of the last.
+fn fbm(random: &mut Xoroshiro, first_octave: i32, value_factor: f64) -> Vec<(Perlin, f64, f32)> {
+    let octaves = (-first_octave + 1) as usize;
+    let mut frequency = 1.0f64;
+    let mut amplitude = value_factor / (2f64.powi(octaves as i32) - 1.0);
+    let mut layers = Vec::with_capacity(octaves);
+    for _ in 0..octaves {
+        layers.push((Perlin::new(random), frequency, amplitude as f32));
+        frequency /= 2.0;
+        amplitude *= 2.0;
+    }
+    layers
 }
 
 /// Two stacks at a hair's breadth apart in frequency, so that together
