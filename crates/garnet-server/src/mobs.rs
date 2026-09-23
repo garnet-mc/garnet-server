@@ -170,6 +170,7 @@ pub fn tick(server: &Arc<Server>, tick: u64) {
     think(server, tick);
     if tick % 20 == 0 {
         burn_the_undead(server);
+        hurt_by_the_world(server);
     }
     if tick % 20 == 0 {
         let rules = server.rules.read().unwrap_or_else(|e| e.into_inner());
@@ -183,8 +184,10 @@ pub fn tick(server: &Arc<Server>, tick: u64) {
     }
 }
 
-/// One step of everyone's brain.
+/// One step of everyone's brain. The pathfinding budget is shared out
+/// between all of them, so a crowd cannot stall a tick between them.
 fn think(server: &Arc<Server>, tick: u64) {
+    let mut budget = crate::pathfinding::TICK_BUDGET;
     let mobs: Vec<Entity> = {
         let entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
         entities.by_id.values().filter(|e| is_mob(&e.kind)).cloned().collect()
@@ -215,7 +218,7 @@ fn think(server: &Arc<Server>, tick: u64) {
             })
             .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        let mut goal: Option<(f64, f64)> = None;
+        let mut goal: Option<(f64, f64, f64)> = None;
         let mut attacked = false;
         if kind.hostile {
             if let Some((distance, _, (px, py, pz), player)) = &nearest {
@@ -224,18 +227,18 @@ fn think(server: &Arc<Server>, tick: u64) {
                     // and backs off if you get too near.
                     Fight::Bow if *distance <= BOW_RANGE => {
                         goal = match *distance < KEEP_AWAY {
-                            true => Some((mob.x * 2.0 - px, mob.z * 2.0 - pz)),
-                            false if *distance > KEEP_AWAY + 3.0 => Some((*px, *pz)),
+                            true => Some((mob.x * 2.0 - px, mob.y, mob.z * 2.0 - pz)),
+                            false if *distance > KEEP_AWAY + 3.0 => Some((*px, *py, *pz)),
                             false => None,
                         };
                         attacked = shoot(server, &mob, (*px, *py, *pz));
                     }
                     Fight::Blast if *distance <= SIGHT => {
-                        goal = Some((*px, *pz));
+                        goal = Some((*px, *py, *pz));
                         fuse(server, &mob, *distance);
                     }
                     Fight::Melee if *distance <= SIGHT => {
-                        goal = Some((*px, *pz));
+                        goal = Some((*px, *py, *pz));
                         if *distance <= REACH && (py - mob.y).abs() < 2.5 {
                             attacked = attack(server, &mob, kind, player);
                         }
@@ -247,10 +250,10 @@ fn think(server: &Arc<Server>, tick: u64) {
         if goal.is_none() && tick % 40 == (mob.id.unsigned_abs() as u64 % 40) {
             // A quiet wander, in a direction that changes now and then.
             let angle = rand::random::<f64>() * std::f64::consts::TAU;
-            goal = Some((mob.x + angle.cos() * 6.0, mob.z + angle.sin() * 6.0));
+            goal = Some((mob.x + angle.cos() * 6.0, mob.y, mob.z + angle.sin() * 6.0));
         }
-        if let Some((gx, gz)) = goal {
-            walk(server, mob.id, kind, gx, gz);
+        if let Some((gx, gy, gz)) = goal {
+            walk(server, &mob, kind, (gx, gy, gz), tick, &mut budget);
         }
         if mob.on_ground {
             crate::redstone::step_on(
@@ -275,24 +278,80 @@ fn think(server: &Arc<Server>, tick: u64) {
     }
 }
 
-/// Pushes a mob towards a spot, hopping up a block when something is in
-/// the way.
-fn walk(server: &Arc<Server>, id: i32, kind: &Kind, gx: f64, gz: f64) {
+/// Walks a mob towards a spot, by a way round whatever is in between.
+fn walk(server: &Arc<Server>, mob: &Entity, kind: &Kind, to: (f64, f64, f64), tick: u64, budget: &mut usize) {
+    let (gx, gy, gz) = to;
+    let goal = BlockPos::new(gx.floor() as i32, gy.floor() as i32, gz.floor() as i32);
+    let path = path_for(server, mob, goal, tick, budget);
+    // Head for the next step of the path, or straight at the goal when
+    // there is no way to be found: a mob that cannot work out a route
+    // still shuffles towards you rather than standing there.
+    let (tx, tz, climbing) = match path {
+        Some(step) => (step.x as f64 + 0.5, step.z as f64 + 0.5, step.y > mob.y.floor() as i32),
+        // No way to be found: shuffle towards the goal, but not into
+        // anything that would hurt.
+        None => {
+            let (dx, dz) = (gx - mob.x, gz - mob.z);
+            let flat = (dx * dx + dz * dz).sqrt().max(0.001);
+            let ahead = BlockPos::new(
+                (mob.x + dx / flat).floor() as i32,
+                mob.y.floor() as i32,
+                (mob.z + dz / flat).floor() as i32,
+            );
+            if crate::pathfinding::dangerous(server, ahead) {
+                return;
+            }
+            (gx, gz, false)
+        }
+    };
     let mut entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(mob) = entities.by_id.get_mut(&id) else { return };
-    let (dx, dz) = (gx - mob.x, gz - mob.z);
+    let Some(stored) = entities.by_id.get_mut(&mob.id) else { return };
+    let (dx, dz) = (tx - stored.x, tz - stored.z);
     let distance = (dx * dx + dz * dz).sqrt();
-    if distance < 0.4 {
+    if distance < 0.1 {
         return;
     }
     let (ux, uz) = (dx / distance, dz / distance);
-    mob.velocity.0 = ux * kind.speed;
-    mob.velocity.2 = uz * kind.speed;
-    mob.yaw = (-ux.atan2(uz)).to_degrees() as f32;
-    let blocked = mob.blocked_ahead;
-    if blocked && mob.on_ground {
-        mob.velocity.1 = 0.42; // a jump, the way every mob climbs a step
+    stored.velocity.0 = ux * kind.speed;
+    stored.velocity.2 = uz * kind.speed;
+    stored.yaw = (-ux.atan2(uz)).to_degrees() as f32;
+    // A step up is jumped, and so is anything unexpected in the way.
+    if (climbing || stored.blocked_ahead) && stored.on_ground {
+        stored.velocity.1 = 0.42;
     }
+}
+
+/// The next step of this mob's path, working out a new one when the old
+/// one has run out, gone stale, or was going somewhere else.
+fn path_for(server: &Arc<Server>, mob: &Entity, goal: BlockPos, tick: u64, budget: &mut usize) -> Option<BlockPos> {
+    let standing = BlockPos::new(mob.x.floor() as i32, mob.y.floor() as i32, mob.z.floor() as i32);
+    let mut path = mob.path.clone();
+    if let Some(current) = &mut path {
+        current.advance(mob.x, mob.y, mob.z);
+        let stale = tick.saturating_sub(current.found_tick) > crate::pathfinding::REPATH_TICKS;
+        let moved = (current.goal.x - goal.x).abs() > 1 || (current.goal.z - goal.z).abs() > 1 || (current.goal.y - goal.y).abs() > 1;
+        if current.done() || stale || moved {
+            path = None;
+        }
+    }
+    if path.is_none() {
+        let steps = crate::pathfinding::find(server, standing, goal, budget)?;
+        if steps.is_empty() {
+            return None;
+        }
+        path = Some(crate::pathfinding::Path {
+            steps,
+            at: 0,
+            goal,
+            found_tick: tick,
+        });
+    }
+    let next = path.as_ref().and_then(|p| p.next_step());
+    let mut entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(stored) = entities.by_id.get_mut(&mob.id) {
+        stored.path = path;
+    }
+    next
 }
 
 /// A skeleton looses an arrow, if it has waited long enough and can see
@@ -423,6 +482,44 @@ fn attack(server: &Arc<Server>, mob: &Entity, kind: &Kind, player: &Arc<crate::p
         Some(kind.name.to_owned()),
     );
     true
+}
+
+/// What a mob is standing in can hurt it: lava, fire and cactus all
+/// take their toll, the same as they do on a player.
+fn hurt_by_the_world(server: &Arc<Server>) {
+    let standing: Vec<(i32, f64, f64, f64)> = {
+        let entities = server.entities.lock().unwrap_or_else(|e| e.into_inner());
+        entities
+            .by_id
+            .values()
+            .filter(|entity| is_mob(&entity.kind) && entity.health > 0.0)
+            .map(|entity| (entity.id, entity.x, entity.y, entity.z))
+            .collect()
+    };
+    for (id, x, y, z) in standing {
+        let feet = block_at(server, x, y + 0.1, z);
+        let damage = match feet.strip_prefix("minecraft:").unwrap_or(&feet) {
+            "lava" => 4.0,
+            "fire" | "soul_fire" | "magma_block" => 1.0,
+            "cactus" | "sweet_berry_bush" | "wither_rose" => 1.0,
+            _ => 0.0,
+        };
+        if damage > 0.0 {
+            world_entities::set_burning(server, id, feet.ends_with("lava") || feet.ends_with("fire"));
+            crate::survival::damage_entity_directly(server, id, damage, (x, z));
+        }
+    }
+}
+
+fn block_at(server: &Arc<Server>, x: f64, y: f64, z: f64) -> String {
+    let pos = BlockPos::new(x.floor() as i32, y.floor() as i32, z.floor() as i32);
+    let Ok(state) = server.world().get_block(pos) else { return String::new() };
+    server
+        .data
+        .blocks
+        .block_of_state(state as i32)
+        .map(|block| block.name.clone())
+        .unwrap_or_default()
 }
 
 /// Morning comes for the undead: anything standing in open daylight

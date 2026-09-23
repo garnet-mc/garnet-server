@@ -36,6 +36,7 @@ mod loot;
 mod mod_host;
 mod mobs;
 mod net;
+mod pathfinding;
 mod player;
 mod potions;
 mod projectiles;

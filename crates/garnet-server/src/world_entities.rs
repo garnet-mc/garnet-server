@@ -55,6 +55,8 @@ pub struct Entity {
     pub fuse: u32,
     /// Alight, and shown that way to everyone watching.
     pub burning: bool,
+    /// The way this mob is taking to wherever it is going.
+    pub path: Option<crate::pathfinding::Path>,
 }
 
 impl Entity {
@@ -225,6 +227,7 @@ pub fn new_entity(server: &Server, kind: &str, x: f64, y: f64, z: f64) -> Option
         projectile: None,
         fuse: 0,
         burning: false,
+        path: None,
     })
 }
 
